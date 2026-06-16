@@ -81,6 +81,8 @@ pnpm dev:server
 pnpm dev:web
 ```
 
+`pnpm dev` / `pnpm dev:server` starts the server in development mode and prints the current admin `AUTH_TOKEN` in the terminal after the server is listening.
+
 Build:
 
 ```bash
@@ -110,8 +112,8 @@ Frontend cross-directory imports should prefer `@web`, `@pages`, and `@styles`; 
 ## Environment
 
 ```env
-AUTH_TOKEN=change-this-admin-token
-PROXY_TOKEN=sk-change-this-proxy-token
+AUTH_TOKEN=change-me-admin-token
+PROXY_TOKEN=change-me-proxy-sk-token
 HOST=0.0.0.0
 PORT=4000
 DATA_DIR=./data
@@ -130,6 +132,8 @@ NOTIFY_COOLDOWN_SEC=300
 ```
 
 SQLite defaults to `${DATA_DIR}/a2api.sqlite`.
+
+`AUTH_TOKEN` is the admin UI login token. It can be set in `a2api/.env` or the process environment. If unset, development mode falls back to `change-me-admin-token`; production mode rejects the built-in default.
 
 ## First Flow
 

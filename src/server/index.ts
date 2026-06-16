@@ -85,3 +85,12 @@ if (existsSync(webDist)) {
 }
 
 await app.listen({ host: config.host, port: config.port });
+
+function shouldPrintAdminToken(): boolean {
+  return process.env.A2API_PRINT_AUTH_TOKEN === 'true' || process.env.npm_lifecycle_event === 'dev:server';
+}
+
+if (shouldPrintAdminToken()) {
+  // 仅开发启动打印登录口令，避免生产日志泄漏。
+  console.info(`[a2api] 管理 Token: ${config.authToken}`);
+}
