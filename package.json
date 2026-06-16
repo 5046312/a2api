@@ -1,0 +1,49 @@
+{
+  "name": "a2api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript AI API aggregation proxy with admin UI",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:web\"",
+    "build:web": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "pnpm build:web && pnpm build:server",
+    "start": "node dist/server/index.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate": "tsx src/server/db/migrate.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.0.0",
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.8.4",
+    "undici": "^6.25.0",
+    "vue": "^3.5.38",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.1",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "concurrently": "^9.1.0",
+    "prettier": "^3.8.4",
+    "sass": "^1.101.0",
+    "tailwindcss": "^4.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.3",
+    "vite": "^6.4.2",
+    "vitest": "^2.1.8"
+  }
+}

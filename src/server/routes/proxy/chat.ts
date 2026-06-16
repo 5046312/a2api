@@ -1,0 +1,592 @@
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { fetch, type Headers, type Response } from 'undici';
+import { z } from 'zod';
+import { config } from '../../config.js';
+import { getProxyAuthContext } from '../../middleware/auth.js';
+import { recordManagedKeyCostUsage } from '../../services/downstreamKeyService.js';
+import { createProxyDebugTrace, finalizeProxyDebugTrace, recordProxyDebugAttempt } from '../../services/proxyDebugTraceService.js';
+import { createProxyLog } from '../../services/proxyLogService.js';
+import {
+  recordSiteApiEndpointFailure,
+  recordSiteApiEndpointSuccess,
+  selectSiteApiEndpointTarget,
+  type SiteApiEndpointTarget
+} from '../../services/siteApiEndpointService.js';
+import { recordChannelFailure, recordChannelSuccess, selectChannel, type SelectedChannel } from '../../services/tokenRouter.js';
+import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicy.js';
+import { fetchDispatcher, mergeCustomHeaders, resolveOpenAiPath, safeHeaders } from '../../shared/http.js';
+import { sendError } from '../../shared/errors.js';
+
+export const openAiProxyBodySchema = z.object({
+  model: z.string().trim().min(1),
+  stream: z.boolean().optional()
+}).passthrough();
+
+export const chatBodySchema = openAiProxyBodySchema.extend({
+  messages: z.array(z.unknown()).min(1)
+});
+
+export type OpenAiProxyBody = z.infer<typeof openAiProxyBodySchema>;
+export type ChatBody = z.infer<typeof chatBodySchema>;
+type UpstreamRequestBody = NonNullable<Parameters<typeof fetch>[1]>['body'];
+
+export type OpenAiProxyEndpointOptions = {
+  downstreamPath: string;
+  upstreamPath: string;
+  headerMode?: 'openai' | 'anthropic';
+  extraAnthropicBetas?: string[];
+  transformBody?: (body: Record<string, unknown>) => Record<string, unknown>;
+  buildUpstreamRequest?: (
+    body: Record<string, unknown>,
+    selected: SelectedChannel
+  ) => Promise<{ body: UpstreamRequestBody; contentType?: string | null }> | { body: UpstreamRequestBody; contentType?: string | null };
+  transformPayload?: (payload: Record<string, unknown>) => Record<string, unknown>;
+  streamContentType?: string;
+  transformStream?: (
+    body: AsyncIterable<Uint8Array>,
+    context: { requestedModel: string; upstreamModel: string }
+  ) => AsyncIterable<Uint8Array>;
+};
+
+export type ProxyRuntimeOptions = {
+  forcedChannelId?: number | null;
+  includeDebugTraceId?: boolean;
+};
+
+const chatProxyOptions: OpenAiProxyEndpointOptions = {
+  downstreamPath: '/v1/chat/completions',
+  upstreamPath: '/v1/chat/completions'
+};
+
+export async function chatProxyRoutes(app: FastifyInstance): Promise<void> {
+  app.post('/v1/chat/completions', async (request, reply) => {
+    const auth = getProxyAuthContext(request);
+    if (!auth) return sendError(reply, 401, 'auth_error', 'Missing proxy auth context', 'missing_proxy_auth');
+    const parsed = chatBodySchema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    return proxyOpenAiEndpoint(parsed.data, auth.keyId, auth.policy, request.headers, reply, chatProxyOptions);
+  });
+
+  app.post('/chat/completions', async (request, reply) => {
+    const auth = getProxyAuthContext(request);
+    if (!auth) return sendError(reply, 401, 'auth_error', 'Missing proxy auth context', 'missing_proxy_auth');
+    const parsed = chatBodySchema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    return proxyOpenAiEndpoint(parsed.data, auth.keyId, auth.policy, request.headers, reply, chatProxyOptions);
+  });
+}
+
+export async function proxyChat(
+  body: ChatBody,
+  downstreamApiKeyId: number | null,
+  policy: DownstreamRoutingPolicy,
+  requestHeaders: Record<string, string | string[] | undefined>,
+  reply: FastifyReply,
+  runtimeOptions: ProxyRuntimeOptions = {}
+) {
+  return proxyOpenAiEndpoint(body, downstreamApiKeyId, policy, requestHeaders, reply, chatProxyOptions, runtimeOptions);
+}
+
+export async function proxyOpenAiEndpoint(
+  body: OpenAiProxyBody,
+  downstreamApiKeyId: number | null,
+  policy: DownstreamRoutingPolicy,
+  requestHeaders: Record<string, string | string[] | undefined>,
+  reply: FastifyReply,
+  options: OpenAiProxyEndpointOptions,
+  runtimeOptions: ProxyRuntimeOptions = {}
+) {
+  const excludedChannelIds: number[] = [];
+  const maxAttempts = Math.max(1, config.proxyMaxChannelAttempts);
+  const startedAt = Date.now();
+  const traceId = await createProxyDebugTrace({
+    downstreamPath: options.downstreamPath,
+    requestedModel: body.model,
+    downstreamApiKeyId,
+    requestHeaders
+  });
+  let retryCount = 0;
+  let lastError = 'No available channel';
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const selected = await selectChannel(body.model, policy, excludedChannelIds, {
+      forcedChannelId: runtimeOptions.forcedChannelId ?? null
+    });
+    if (!selected) {
+      break;
+    }
+
+    const result = await callUpstreamChat({
+      selected,
+      body,
+      requestHeaders,
+      downstreamApiKeyId,
+      retryCount,
+      traceId,
+      attemptIndex: attempt + 1,
+      startedAt,
+      reply,
+      options,
+      runtimeOptions
+    });
+
+    if (result.done) return result.response;
+
+    lastError = result.error;
+    excludedChannelIds.push(selected.channelId);
+    retryCount += 1;
+  }
+
+  await finalizeProxyDebugTrace(traceId, {
+    finalStatus: 'failed',
+    finalHttpStatus: 503,
+    decisionSummary: { error: lastError, excludedChannelIds, retryCount }
+  });
+  await createProxyLog({
+    debugTraceId: traceId,
+    downstreamApiKeyId,
+    modelRequested: body.model,
+    status: 'failed',
+    httpStatus: 503,
+    isStream: body.stream ?? false,
+    latencyMs: Date.now() - startedAt,
+    errorMessage: lastError,
+    retryCount
+  });
+  return sendError(reply, 503, 'no_available_channel', lastError, 'no_available_channel');
+}
+
+async function callUpstreamChat(input: {
+  selected: SelectedChannel;
+  body: OpenAiProxyBody;
+  requestHeaders: Record<string, string | string[] | undefined>;
+  downstreamApiKeyId: number | null;
+  retryCount: number;
+  traceId: number;
+  attemptIndex: number;
+  startedAt: number;
+  reply: FastifyReply;
+  options: OpenAiProxyEndpointOptions;
+  runtimeOptions: ProxyRuntimeOptions;
+}): Promise<{ done: true; response: unknown } | { done: false; error: string }> {
+  const baseUpstreamBody: Record<string, unknown> = {
+    ...input.body,
+    model: input.selected.sourceModel
+  };
+  const upstreamBody = input.options.transformBody ? input.options.transformBody(baseUpstreamBody) : baseUpstreamBody;
+  const upstreamRequest = input.options.buildUpstreamRequest
+    ? await input.options.buildUpstreamRequest(upstreamBody, input.selected)
+    : { body: JSON.stringify(upstreamBody), contentType: 'application/json' };
+  const contentType = Object.prototype.hasOwnProperty.call(upstreamRequest, 'contentType')
+    ? upstreamRequest.contentType ?? null
+    : 'application/json';
+  const baseHeaders = mergeCustomHeaders(safeHeaders(input.requestHeaders), input.selected.customHeaders);
+  const headers = buildUpstreamHeaders({
+    baseHeaders,
+    token: input.selected.accountToken,
+    stream: input.body.stream ?? false,
+    options: input.options,
+    contentType
+  });
+  const excludedEndpointIds: number[] = [];
+  let lastEndpointError = 'No available site endpoint';
+
+  while (true) {
+    const target = await selectSiteApiEndpointTarget(input.selected.siteId, input.selected.siteUrl, excludedEndpointIds);
+    if (!target) {
+      const error = lastEndpointError;
+      await recordChannelFailure(input.selected.channelId, error);
+      return { done: false, error };
+    }
+
+    const url = resolveOpenAiPath(target.baseUrl, input.options.upstreamPath);
+    const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
+    let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      const dispatcher = fetchDispatcher(input.selected.proxyUrl);
+      const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
+        method: 'POST',
+        headers
+      };
+      if (upstreamRequest.body !== undefined) fetchOptions.body = upstreamRequest.body;
+      if (dispatcher) fetchOptions.dispatcher = dispatcher;
+      if (controller) {
+        fetchOptions.signal = controller.signal;
+        firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
+      }
+      const response = await fetch(url, fetchOptions);
+      if (firstByteTimer) clearTimeout(firstByteTimer);
+
+      if (!response.ok) {
+        const text = await response.text();
+        const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
+        lastEndpointError = error;
+        const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
+        await recordProxyDebugAttempt({
+          traceId: input.traceId,
+          attemptIndex: input.attemptIndex,
+          endpoint: formatEndpointName(input.selected, target),
+          requestPath: input.options.upstreamPath,
+          targetUrl: url,
+          requestHeaders: headers,
+          responseStatus: response.status,
+          responseHeaders: headersToRecord(response.headers),
+          rawErrorText: error
+        });
+        if (endpointFailure.retryable && target.endpointId !== null) {
+          excludedEndpointIds.push(target.endpointId);
+          continue;
+        }
+        await recordChannelFailure(input.selected.channelId, error);
+        if (isRetryableStatus(response.status)) {
+          return { done: false, error };
+        }
+        await finalizeProxyDebugTrace(input.traceId, {
+          selectedChannelId: input.selected.channelId,
+          selectedRouteId: input.selected.routeId,
+          selectedAccountId: input.selected.accountId,
+          selectedSiteId: input.selected.siteId,
+          selectedSitePlatform: input.selected.sitePlatform,
+          finalStatus: 'failed',
+          finalHttpStatus: response.status,
+          finalUpstreamPath: url,
+          finalResponseHeaders: headersToRecord(response.headers)
+        });
+        await createProxyLog({
+          debugTraceId: input.traceId,
+          routeId: input.selected.routeId,
+          channelId: input.selected.channelId,
+          accountId: input.selected.accountId,
+          downstreamApiKeyId: input.downstreamApiKeyId,
+          modelRequested: input.selected.requestedModel,
+          modelActual: input.selected.sourceModel,
+          status: 'failed',
+          httpStatus: response.status,
+          isStream: input.body.stream ?? false,
+          latencyMs: Date.now() - input.startedAt,
+          errorMessage: error,
+          retryCount: input.retryCount
+        });
+        return {
+          done: true,
+          response: sendError(input.reply, upstreamStatusToClientStatus(response.status), 'upstream_error', error, 'upstream_error')
+        };
+      }
+
+      if (input.body.stream) {
+        await recordProxyDebugAttempt({
+          traceId: input.traceId,
+          attemptIndex: input.attemptIndex,
+          endpoint: formatEndpointName(input.selected, target),
+          requestPath: input.options.upstreamPath,
+          targetUrl: url,
+          requestHeaders: headers,
+          responseStatus: response.status,
+          responseHeaders: headersToRecord(response.headers)
+        });
+        await streamUpstreamResponse(input.reply, response, { ...input, endpointTarget: target, targetUrl: url });
+        return { done: true, response: input.reply };
+      }
+
+      const upstreamPayload = await response.json() as Record<string, unknown>;
+      const payload = input.options.transformPayload ? input.options.transformPayload(upstreamPayload) : upstreamPayload;
+      await recordProxyDebugAttempt({
+        traceId: input.traceId,
+        attemptIndex: input.attemptIndex,
+        endpoint: formatEndpointName(input.selected, target),
+        requestPath: input.options.upstreamPath,
+        targetUrl: url,
+        requestHeaders: headers,
+        responseStatus: response.status,
+        responseHeaders: headersToRecord(response.headers)
+      });
+      const usage = extractUsage(payload);
+      const estimatedCost = estimateUsageCost(usage.totalTokens, input.selected.accountUnitCost);
+      await recordSiteApiEndpointSuccess(target.endpointId);
+      await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
+      if (input.downstreamApiKeyId !== null) {
+        await recordManagedKeyCostUsage(input.downstreamApiKeyId, estimatedCost);
+      }
+      await finalizeProxyDebugTrace(input.traceId, {
+        selectedChannelId: input.selected.channelId,
+        selectedRouteId: input.selected.routeId,
+        selectedAccountId: input.selected.accountId,
+        selectedSiteId: input.selected.siteId,
+        selectedSitePlatform: input.selected.sitePlatform,
+        decisionSummary: { usage, retryCount: input.retryCount },
+        finalStatus: 'success',
+        finalHttpStatus: response.status,
+        finalUpstreamPath: url,
+        finalResponseHeaders: headersToRecord(response.headers)
+      });
+      await createProxyLog({
+        debugTraceId: input.traceId,
+        routeId: input.selected.routeId,
+        channelId: input.selected.channelId,
+        accountId: input.selected.accountId,
+        downstreamApiKeyId: input.downstreamApiKeyId,
+        modelRequested: input.selected.requestedModel,
+        modelActual: input.selected.sourceModel,
+        status: 'success',
+        httpStatus: response.status,
+        isStream: false,
+        latencyMs: Date.now() - input.startedAt,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        estimatedCost,
+        retryCount: input.retryCount
+      });
+      if (input.runtimeOptions.includeDebugTraceId) payload.a2apiDebugTraceId = input.traceId;
+      return { done: true, response: input.reply.code(response.status).send(payload) };
+    } catch (error) {
+      if (firstByteTimer) clearTimeout(firstByteTimer);
+      const timeoutMessage = config.proxyFirstByteTimeoutSec > 0
+        ? `First byte timeout after ${config.proxyFirstByteTimeoutSec}s`
+        : null;
+      const message = error instanceof Error && error.name === 'AbortError' && timeoutMessage
+        ? timeoutMessage
+        : error instanceof Error
+          ? error.message
+          : 'Network error';
+      lastEndpointError = message;
+      const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
+      await recordProxyDebugAttempt({
+        traceId: input.traceId,
+        attemptIndex: input.attemptIndex,
+        endpoint: formatEndpointName(input.selected, target),
+        requestPath: input.options.upstreamPath,
+        targetUrl: url,
+        requestHeaders: headers,
+        rawErrorText: message
+      });
+      if (endpointFailure.retryable && target.endpointId !== null) {
+        excludedEndpointIds.push(target.endpointId);
+        continue;
+      }
+      await recordChannelFailure(input.selected.channelId, message);
+      return { done: false, error: message };
+    }
+  }
+}
+
+async function streamUpstreamResponse(
+  reply: FastifyReply,
+  response: Response,
+  input: {
+    selected: SelectedChannel;
+    downstreamApiKeyId: number | null;
+    retryCount: number;
+    traceId: number;
+    startedAt: number;
+    endpointTarget: SiteApiEndpointTarget;
+    targetUrl: string;
+    options: OpenAiProxyEndpointOptions;
+  }
+): Promise<void> {
+  const firstByteAt = Date.now();
+  reply.hijack();
+  reply.raw.writeHead(response.status, {
+    'content-type': input.options.streamContentType || response.headers.get('content-type') || 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive'
+  });
+
+  try {
+    const body = response.body as unknown as AsyncIterable<Uint8Array> | null;
+    if (!body) throw new Error('Upstream stream body is empty');
+    const outputBody = input.options.transformStream
+      ? input.options.transformStream(body, {
+          requestedModel: input.selected.requestedModel,
+          upstreamModel: input.selected.sourceModel
+        })
+      : body;
+    for await (const chunk of outputBody) {
+      reply.raw.write(chunk);
+    }
+    reply.raw.end();
+    await recordSiteApiEndpointSuccess(input.endpointTarget.endpointId);
+    await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt);
+    await finalizeProxyDebugTrace(input.traceId, {
+      selectedChannelId: input.selected.channelId,
+      selectedRouteId: input.selected.routeId,
+      selectedAccountId: input.selected.accountId,
+      selectedSiteId: input.selected.siteId,
+      selectedSitePlatform: input.selected.sitePlatform,
+      finalStatus: 'success',
+      finalHttpStatus: response.status,
+      finalUpstreamPath: input.targetUrl,
+      finalResponseHeaders: headersToRecord(response.headers)
+    });
+    await createProxyLog({
+      debugTraceId: input.traceId,
+      routeId: input.selected.routeId,
+      channelId: input.selected.channelId,
+      accountId: input.selected.accountId,
+      downstreamApiKeyId: input.downstreamApiKeyId,
+      modelRequested: input.selected.requestedModel,
+      modelActual: input.selected.sourceModel,
+      status: 'success',
+      httpStatus: response.status,
+      isStream: true,
+      firstByteLatencyMs: firstByteAt - input.startedAt,
+      latencyMs: Date.now() - input.startedAt,
+      retryCount: input.retryCount
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Stream failed';
+    reply.raw.destroy();
+    await recordSiteApiEndpointFailure(input.endpointTarget.endpointId, { message });
+    await recordChannelFailure(input.selected.channelId, message);
+    await finalizeProxyDebugTrace(input.traceId, {
+      selectedChannelId: input.selected.channelId,
+      selectedRouteId: input.selected.routeId,
+      selectedAccountId: input.selected.accountId,
+      selectedSiteId: input.selected.siteId,
+      selectedSitePlatform: input.selected.sitePlatform,
+      finalStatus: 'failed',
+      finalHttpStatus: response.status,
+      finalUpstreamPath: input.targetUrl,
+      finalResponseHeaders: headersToRecord(response.headers)
+    });
+    await createProxyLog({
+      debugTraceId: input.traceId,
+      routeId: input.selected.routeId,
+      channelId: input.selected.channelId,
+      accountId: input.selected.accountId,
+      downstreamApiKeyId: input.downstreamApiKeyId,
+      modelRequested: input.selected.requestedModel,
+      modelActual: input.selected.sourceModel,
+      status: 'failed',
+      httpStatus: response.status,
+      isStream: true,
+      firstByteLatencyMs: firstByteAt - input.startedAt,
+      latencyMs: Date.now() - input.startedAt,
+      errorMessage: message,
+      retryCount: input.retryCount
+    });
+  }
+}
+
+function formatEndpointName(selected: SelectedChannel, target: SiteApiEndpointTarget): string {
+  return target.endpointId === null
+    ? selected.siteName
+    : `${selected.siteName}#${target.endpointId}`;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function upstreamStatusToClientStatus(status: number): number {
+  if (status === 401 || status === 403) return 502;
+  if (status === 404) return 502;
+  return status >= 500 ? 502 : status;
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+  const output: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    output[key] = value;
+  });
+  return output;
+}
+
+function buildUpstreamHeaders(input: {
+  baseHeaders: Record<string, string>;
+  token: string;
+  stream: boolean;
+  options: OpenAiProxyEndpointOptions;
+  contentType: string | null;
+}): Record<string, string> {
+  if (input.options.headerMode === 'anthropic') {
+    return buildAnthropicHeaders(input);
+  }
+  const headers = { ...input.baseHeaders };
+  setHeader(headers, 'Authorization', `Bearer ${input.token}`);
+  if (input.contentType === null) {
+    deleteHeader(headers, 'Content-Type');
+  } else {
+    setHeader(headers, 'Content-Type', input.contentType);
+  }
+  setHeader(headers, 'Accept', input.stream ? 'text/event-stream' : 'application/json');
+  return headers;
+}
+
+function buildAnthropicHeaders(input: {
+  baseHeaders: Record<string, string>;
+  token: string;
+  stream: boolean;
+  options: OpenAiProxyEndpointOptions;
+  contentType: string | null;
+}): Record<string, string> {
+  const headers = { ...input.baseHeaders };
+  const version = getHeader(headers, 'anthropic-version') || '2023-06-01';
+  const beta = mergeCommaHeader(getHeader(headers, 'anthropic-beta'), input.options.extraAnthropicBetas || []);
+  // Anthropic 原生接口使用 x-api-key，并要求 anthropic-version。
+  setHeader(headers, 'x-api-key', input.token);
+  setHeader(headers, 'anthropic-version', version);
+  if (beta) setHeader(headers, 'anthropic-beta', beta);
+  if (input.contentType === null) {
+    deleteHeader(headers, 'Content-Type');
+  } else {
+    setHeader(headers, 'Content-Type', input.contentType);
+  }
+  setHeader(headers, 'Accept', input.stream ? 'text/event-stream' : 'application/json');
+  return headers;
+}
+
+function getHeader(headers: Record<string, string>, name: string): string {
+  const normalized = name.toLowerCase();
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === normalized);
+  return entry?.[1]?.trim() || '';
+}
+
+function setHeader(headers: Record<string, string>, name: string, value: string): void {
+  const normalized = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalized) delete headers[key];
+  }
+  headers[name] = value;
+}
+
+function deleteHeader(headers: Record<string, string>, name: string): void {
+  const normalized = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalized) delete headers[key];
+  }
+}
+
+function mergeCommaHeader(current: string, additions: string[]): string {
+  const values = [
+    ...current.split(','),
+    ...additions
+  ].map((item) => item.trim()).filter(Boolean);
+  return Array.from(new Set(values)).join(',');
+}
+
+function extractUsageNumber(payload: Record<string, unknown>, key: string): number {
+  const usage = payload.usage;
+  const value = usage && typeof usage === 'object'
+    ? (usage as Record<string, unknown>)[key]
+    : payload[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function extractUsage(payload: Record<string, unknown>) {
+  const promptTokens = extractUsageNumber(payload, 'prompt_tokens') || extractUsageNumber(payload, 'input_tokens');
+  const completionTokens = extractUsageNumber(payload, 'completion_tokens') || extractUsageNumber(payload, 'output_tokens');
+  const explicitTotalTokens = extractUsageNumber(payload, 'total_tokens');
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: explicitTotalTokens || promptTokens + completionTokens
+  };
+}
+
+function estimateUsageCost(totalTokens: number, unitCost: number | null): number {
+  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
+  if (unitCost === null || !Number.isFinite(unitCost) || unitCost <= 0) return 0;
+  return Math.round((totalTokens / 1_000_000) * unitCost * 1_000_000) / 1_000_000;
+}
