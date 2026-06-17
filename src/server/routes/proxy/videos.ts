@@ -519,7 +519,7 @@ async function cloneVideoFormData(formData: MultipartFormData, upstreamModel: st
       next.append(key, value);
     }
   }
-  // Video 创建必须使用路由命中的真实上游模型。
+  // Video 创建必须使用命中的真实上游模型。
   next.set('model', upstreamModel);
   return next;
 }

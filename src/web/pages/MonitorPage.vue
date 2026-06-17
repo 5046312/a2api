@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import { api, type MonitorAccount, type MonitorOverview, type MonitorSettings, type MonitorStatus } from '@web/api';
 
 const overview = ref<MonitorOverview | null>(null);
@@ -11,9 +12,18 @@ const probingAccountId = ref<number | null>(null);
 const savingSettings = ref(false);
 const error = ref('');
 const message = ref('');
+const notice = useMessage();
 const filters = reactive({
   status: 'all',
   keyword: ''
+});
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
 });
 const statusFilterOptions = [
   { label: '全部', value: 'all' },
@@ -21,7 +31,7 @@ const statusFilterOptions = [
   { label: '故障', value: 'down' },
   { label: '待检查', value: 'pending' },
   { label: '停用', value: 'maintenance' },
-  { label: '禁用账号', value: 'disabled' }
+  { label: '禁用上游账号', value: 'disabled' }
 ];
 const settingsForm = reactive<MonitorSettings>({
   enabled: true,
@@ -37,7 +47,7 @@ const settingsForm = reactive<MonitorSettings>({
 const summaryCards = computed(() => {
   const data = overview.value;
   return [
-    { label: '全部账号', value: data?.totalAccounts ?? 0 },
+    { label: '全部上游账号', value: data?.totalAccounts ?? 0 },
     { label: '可用', value: data?.statusCount.up ?? 0 },
     { label: '故障', value: data?.statusCount.down ?? 0 },
     { label: '待检查', value: data?.statusCount.pending ?? 0 },
@@ -123,7 +133,7 @@ async function selectAccount(account: MonitorAccount) {
   try {
     selectedAccount.value = await api.getMonitorAccount(account.accountId);
   } catch (err) {
-    setError(err, '加载账号监控详情失败');
+    setError(err, '加载上游账号监控详情失败');
   }
 }
 
@@ -133,12 +143,12 @@ async function checkAccount(account: MonitorAccount) {
   message.value = '';
   try {
     const result = await api.checkMonitorAccount(account.accountId);
-    message.value = `账号检查完成：${statusText(result.status)} ${result.message}`;
+    message.value = `上游账号检查完成：${statusText(result.status)} ${result.message}`;
     await loadMonitor();
     const matched = accounts.value.find((item) => item.accountId === account.accountId);
     if (matched) await selectAccount(matched);
   } catch (err) {
-    setError(err, '账号检查失败');
+    setError(err, '上游账号检查失败');
   } finally {
     probingAccountId.value = null;
   }
@@ -202,8 +212,8 @@ onMounted(loadMonitor);
     <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
-          <h2>账号可用性监控</h2>
-          <p class="muted">定时探测所有账号的模型接口，不发起真实对话请求。</p>
+          <h2>上游账号可用性监控</h2>
+          <p class="muted">定时探测所有上游账号的模型接口，不发起真实对话请求。</p>
         </div>
         <div class="form-actions">
           <n-button secondary attr-type="button" :disabled="loading" @click="loadMonitor">刷新</n-button>
@@ -221,14 +231,11 @@ onMounted(loadMonitor);
       </div>
     </n-card>
 
-    <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-    <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
-
     <div class="two-column monitor-layout">
       <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
-            <h2>账号列表</h2>
+            <h2>上游账号列表</h2>
             <p class="muted">按状态筛选当前监控对象。</p>
           </div>
         </div>
@@ -240,7 +247,7 @@ onMounted(loadMonitor);
           </label>
           <label class="field">
             <span>关键词</span>
-            <n-input v-model:value="filters.keyword" placeholder="账号、上游地址、Base URL" @keyup.enter="loadMonitor" />
+            <n-input v-model:value="filters.keyword" placeholder="上游账号、平台" @keyup.enter="loadMonitor" />
           </label>
           <n-button secondary attr-type="button" @click="loadMonitor">筛选</n-button>
         </div>
@@ -250,7 +257,7 @@ onMounted(loadMonitor);
             <thead>
               <tr>
                 <th>状态</th>
-                <th>账号</th>
+                <th>上游账号</th>
                 <th>平台</th>
                 <th>延迟</th>
                 <th>24h</th>
@@ -270,11 +277,9 @@ onMounted(loadMonitor);
                 </td>
                 <td>
                   <strong>{{ account.accountName }}</strong>
-                  <small>{{ account.siteName }}</small>
                 </td>
                 <td>
                   <span>{{ account.sitePlatform }}</span>
-                  <small>{{ account.siteUrl }}</small>
                 </td>
                 <td>{{ formatLatency(account.latencyMs) }}</td>
                 <td>{{ formatPercent(account.uptime24h) }}</td>
@@ -301,7 +306,7 @@ onMounted(loadMonitor);
                 </td>
               </tr>
               <tr v-if="accounts.length === 0">
-                <td colspan="7" class="empty-cell">{{ loading ? '加载中' : '暂无账号监控数据' }}</td>
+                <td colspan="7" class="empty-cell">{{ loading ? '加载中' : '暂无上游账号监控数据' }}</td>
               </tr>
             </tbody>
           </n-table>
@@ -312,7 +317,7 @@ onMounted(loadMonitor);
         <n-card class="admin-card" :bordered="false">
           <div class="panel-header">
             <div>
-              <h2>账号详情</h2>
+              <h2>上游账号详情</h2>
               <p class="muted">最近心跳和故障恢复事件。</p>
             </div>
           </div>
@@ -324,7 +329,6 @@ onMounted(loadMonitor);
               </span>
               <div>
                 <strong>{{ selectedAccount.accountName }}</strong>
-                <p class="muted">{{ selectedAccount.siteName }} / {{ selectedAccount.siteUrl }}</p>
               </div>
             </div>
             <div class="detail-grid">
@@ -355,7 +359,7 @@ onMounted(loadMonitor);
               <p v-if="!selectedAccount.events?.length" class="muted">暂无故障恢复事件。</p>
             </div>
           </div>
-          <p v-else class="muted">请选择一个账号。</p>
+          <p v-else class="muted">请选择一个上游账号。</p>
         </n-card>
 
         <n-card class="admin-card" :bordered="false">

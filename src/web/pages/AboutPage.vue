@@ -3,8 +3,8 @@ const version = '0.1.0';
 
 const highlights = [
   { title: '统一代理入口', desc: '兼容 OpenAI、Claude Messages、Gemini 和多类 OpenAI-compatible 扩展接口。' },
-  { title: '模型路由', desc: '按模型、上游地址、账号、内部凭据和下游 Key 策略选择可用通道。' },
-  { title: '管理后台', desc: '覆盖账号、路由、下游 Key、日志、事件、通知、导入导出和模型测试。' },
+  { title: '模型', desc: '按模型、上游账号和下游 Key 策略选择可用通道。' },
+  { title: '管理后台', desc: '覆盖上游账号、模型、下游 Key、日志、事件、通知、导入导出和模型测试。' },
   { title: '轻量部署', desc: 'Fastify + SQLite + Vite Vue，当前以 Docker Compose 和本地服务模式为主。' }
 ];
 
@@ -29,7 +29,7 @@ const deferred = [
       <div class="panel-header">
         <div>
           <h2>关于 a2api</h2>
-          <p class="muted">AI API 聚合代理，面向多上游、多账号和多协议转发。</p>
+          <p class="muted">AI API 聚合代理，面向多上游账号和多协议转发。</p>
         </div>
         <n-tag type="success" size="small">v{{ version }}</n-tag>
       </div>

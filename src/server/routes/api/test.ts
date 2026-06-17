@@ -31,7 +31,7 @@ export async function testRoutes(app: FastifyInstance): Promise<void> {
         { forcedChannelId: forcedChannelId ?? null, includeDebugTraceId: true }
       );
     }
-    // 管理端测试入口复用代理核心，避免测试路径和真实代理出现两套路由逻辑。
+    // 管理端测试入口复用代理核心，避免测试路径和真实代理出现两套模型选择逻辑。
     return proxyChat(
       { ...chatBody, stream: false },
       null,

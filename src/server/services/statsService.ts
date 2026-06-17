@@ -39,7 +39,6 @@ export type StatsMarketplaceItem = {
   model: string;
   siteCount: number;
   accountCount: number;
-  tokenCount: number;
   minCost: number;
   avgLatencyMs: number;
   successRate: number;
@@ -48,7 +47,6 @@ export type StatsMarketplaceItem = {
 type MarketplaceAggregate = {
   siteIds: Set<number>;
   accountIds: Set<number>;
-  tokenIds: Set<number>;
   costs: number[];
   latencies: number[];
   logSuccess: number;
@@ -194,39 +192,6 @@ export async function getModelUsageStats(query: { range: StatsRange; model?: str
 export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
   const aggregates = new Map<string, MarketplaceAggregate>();
 
-  const tokenRows = await db
-    .select({
-      model: schema.tokenModelAvailability.modelName,
-      siteId: schema.sites.id,
-      accountId: schema.accounts.id,
-      tokenId: schema.accountTokens.id,
-      unitCost: schema.accounts.unitCost,
-      latencyMs: schema.tokenModelAvailability.latencyMs
-    })
-    .from(schema.tokenModelAvailability)
-    .innerJoin(schema.accountTokens, eq(schema.accountTokens.id, schema.tokenModelAvailability.tokenId))
-    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.accountTokens.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
-    .where(
-      and(
-        eq(schema.tokenModelAvailability.available, true),
-        eq(schema.accountTokens.enabled, true),
-        eq(schema.accountTokens.valueStatus, 'ready'),
-        eq(schema.accounts.status, 'active'),
-        eq(schema.sites.status, 'active')
-      )
-    )
-    .all();
-
-  for (const row of tokenRows) {
-    const aggregate = ensureMarketplaceAggregate(aggregates, row.model);
-    aggregate.siteIds.add(row.siteId);
-    aggregate.accountIds.add(row.accountId);
-    aggregate.tokenIds.add(row.tokenId);
-    pushNumber(aggregate.costs, row.unitCost);
-    pushNumber(aggregate.latencies, row.latencyMs);
-  }
-
   const accountRows = await db
     .select({
       model: schema.modelAvailability.modelName,
@@ -279,13 +244,12 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
         model,
         siteCount: aggregate.siteIds.size,
         accountCount: aggregate.accountIds.size,
-        tokenCount: aggregate.tokenIds.size,
         minCost: aggregate.costs.length > 0 ? Math.min(...aggregate.costs) : 0,
         avgLatencyMs: Math.round(latencyAverage || logLatencyAverage || 0),
         successRate: successRate(aggregate.logSuccess, aggregate.logTotal)
       };
     })
-    .sort((left, right) => right.accountCount - left.accountCount || right.tokenCount - left.tokenCount || left.model.localeCompare(right.model));
+    .sort((left, right) => right.accountCount - left.accountCount || left.model.localeCompare(right.model));
 }
 
 function ensureMarketplaceAggregate(aggregates: Map<string, MarketplaceAggregate>, model: string): MarketplaceAggregate {
@@ -295,7 +259,6 @@ function ensureMarketplaceAggregate(aggregates: Map<string, MarketplaceAggregate
   const next: MarketplaceAggregate = {
     siteIds: new Set(),
     accountIds: new Set(),
-    tokenIds: new Set(),
     costs: [],
     latencies: [],
     logSuccess: 0,

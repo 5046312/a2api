@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { isModelDisabled } from '../shared/modelMatch.js';
 import { nowIso } from '../shared/time.js';
@@ -54,7 +55,7 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
     if (existing) {
       await db
         .update(schema.tokenRoutes)
-        .set({ displayName: row.modelName, enabled: true, updatedAt: now })
+        .set({ displayName: row.modelName, updatedAt: now })
         .where(eq(schema.tokenRoutes.id, existing.id))
         .run();
       routeByModel.set(row.modelName, existing.id);
@@ -66,7 +67,8 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
           modelPattern: row.modelName,
           displayName: row.modelName,
           routeMode: 'exact',
-          routingStrategy: 'weighted',
+          // 自动模型初始策略跟随系统默认值，单个模型后续可在模型页单独覆盖。
+          routingStrategy: config.defaultRoutingStrategy,
           enabled: true,
           manualOverride: false,
           createdAt: now,
@@ -83,18 +85,7 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
   for (const row of usableAvailabilityRows) {
     const routeId = routeByModel.get(row.modelName);
     if (!routeId) continue;
-    const tokens = await db
-      .select()
-      .from(schema.accountTokens)
-      .where(and(eq(schema.accountTokens.accountId, row.accountId), eq(schema.accountTokens.enabled, true), eq(schema.accountTokens.valueStatus, 'ready')))
-      .all();
-    if (tokens.length === 0) {
-      desired.push({ routeId, accountId: row.accountId, tokenId: null, sourceModel: row.modelName });
-    } else {
-      for (const token of tokens) {
-        desired.push({ routeId, accountId: row.accountId, tokenId: token.id, sourceModel: row.modelName });
-      }
-    }
+    desired.push({ routeId, accountId: row.accountId, tokenId: null, sourceModel: row.modelName });
   }
 
   const desiredKeys = new Set<string>();
@@ -105,7 +96,7 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
     if (existing) {
       await db
         .update(schema.routeChannels)
-        .set({ enabled: true, sourceModel: item.sourceModel })
+        .set({ sourceModel: item.sourceModel })
         .where(eq(schema.routeChannels.id, existing.id))
         .run();
       channelsUpdated += 1;

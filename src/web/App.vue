@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, type Component } from 'vue';
-import { dateZhCN, NIcon, zhCN, type MenuOption } from 'naive-ui';
+import { createDiscreteApi, dateZhCN, NIcon, zhCN, type MenuOption } from 'naive-ui';
+import { storeToRefs } from 'pinia';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 import {
   AlertCircleOutline,
   CloudUploadOutline,
@@ -18,66 +20,47 @@ import {
   SettingsOutline,
   StatsChartOutline
 } from '@vicons/ionicons5';
-import { api } from '@web/api';
-import { clearAdminToken, getAdminToken } from '@web/authSession';
 import { naiveThemeOverrides } from '@web/naiveTheme';
-import AboutPage from '@pages/AboutPage.vue';
-import AccountsPage from '@pages/AccountsPage.vue';
-import DashboardPage from '@pages/DashboardPage.vue';
-import DownstreamKeysPage from '@pages/DownstreamKeysPage.vue';
-import EventsPage from '@pages/EventsPage.vue';
-import ImportExportPage from '@pages/ImportExportPage.vue';
-import LoginPage from '@pages/LoginPage.vue';
-import ModelTesterPage from '@pages/ModelTesterPage.vue';
-import ModelsPage from '@pages/ModelsPage.vue';
-import MonitorPage from '@pages/MonitorPage.vue';
-import NotificationsPage from '@pages/NotificationsPage.vue';
-import OAuthPage from '@pages/OAuthPage.vue';
-import ProgramLogsPage from '@pages/ProgramLogsPage.vue';
-import ProxyLogsPage from '@pages/ProxyLogsPage.vue';
-import RoutesPage from '@pages/RoutesPage.vue';
-import SettingsPage from '@pages/SettingsPage.vue';
+import { adminRoutes, routeNameFromValue, type AdminRouteName } from '@web/router';
+import { useAdminSessionStore } from '@web/stores/adminSession';
 
-type PageKey =
-  | 'dashboard'
-  | 'accounts'
-  | 'routes'
-  | 'downstreamKeys'
-  | 'proxyLogs'
-  | 'programLogs'
-  | 'models'
-  | 'modelTester'
-  | 'monitor'
-  | 'events'
-  | 'notifications'
-  | 'settings'
-  | 'oauth'
-  | 'importExport'
-  | 'about';
+const route = useRoute();
+const router = useRouter();
+const session = useAdminSessionStore();
+const { authed, booted } = storeToRefs(session);
+const { message } = createDiscreteApi(['message']);
+const backendConnected = ref(false);
+// 管理端和代理服务同源部署；本地开发时 Vite 代理同样支持该地址调用。
+const serviceBaseUrl = computed(() => window.location.origin);
 
-const authed = ref(Boolean(getAdminToken()));
-const page = ref<PageKey>('dashboard');
-const booting = ref(true);
+const navIcons: Record<AdminRouteName, Component> = {
+  dashboard: StatsChartOutline,
+  accounts: PeopleOutline,
+  routes: GitBranchOutline,
+  downstreamKeys: KeyOutline,
+  proxyLogs: DocumentTextOutline,
+  programLogs: ListOutline,
+  models: CubeOutline,
+  modelTester: FlaskOutline,
+  monitor: PulseOutline,
+  events: AlertCircleOutline,
+  notifications: NotificationsOutline,
+  settings: SettingsOutline,
+  oauth: KeypadOutline,
+  importExport: CloudUploadOutline,
+  about: InformationCircleOutline
+};
 
-const navItems: Array<{ key: PageKey; label: string; icon: Component }> = [
-  { key: 'dashboard', label: '仪表盘', icon: StatsChartOutline },
-  { key: 'accounts', label: '账号', icon: PeopleOutline },
-  { key: 'routes', label: '路由', icon: GitBranchOutline },
-  { key: 'downstreamKeys', label: '密钥', icon: KeyOutline },
-  { key: 'proxyLogs', label: '日志', icon: DocumentTextOutline },
-  { key: 'programLogs', label: '程序日志', icon: ListOutline },
-  { key: 'models', label: '模型', icon: CubeOutline },
-  { key: 'modelTester', label: '操练场', icon: FlaskOutline },
-  { key: 'monitor', label: '监控', icon: PulseOutline },
-  { key: 'events', label: '事件', icon: AlertCircleOutline },
-  { key: 'notifications', label: '通知', icon: NotificationsOutline },
-  { key: 'settings', label: '设置', icon: SettingsOutline },
-  { key: 'oauth', label: 'OAuth', icon: KeypadOutline },
-  { key: 'importExport', label: '导入导出', icon: CloudUploadOutline },
-  { key: 'about', label: '关于', icon: InformationCircleOutline }
-];
+const navItems = adminRoutes
+  .filter((item) => item.meta.nav)
+  .map((item) => ({
+    key: item.name,
+    label: item.meta.title,
+    icon: navIcons[item.name]
+  }));
 
-const currentTitle = computed(() => navItems.find((item) => item.key === page.value)?.label || '仪表盘');
+const currentPage = computed(() => routeNameFromValue(route.name));
+const currentTitle = computed(() => navItems.find((item) => item.key === currentPage.value)?.label || '仪表盘');
 const menuOptions = computed<MenuOption[]>(() =>
   navItems.map((item) => ({
     key: item.key,
@@ -86,31 +69,39 @@ const menuOptions = computed<MenuOption[]>(() =>
   }))
 );
 
-onMounted(async () => {
-  if (!getAdminToken()) {
-    authed.value = false;
-    booting.value = false;
-    return;
-  }
-  try {
-    await api.authCheck();
-    authed.value = true;
-  } catch {
-    authed.value = false;
-  } finally {
-    booting.value = false;
-  }
-});
+function changePage(value: string) {
+  const routeName = routeNameFromValue(value);
+  if (routeName === currentPage.value) return;
+  router.push({ name: routeName });
+}
 
-function handleAuthed() {
-  authed.value = true;
-  page.value = 'dashboard';
+async function checkBackendService() {
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store' });
+    const data = (await response.json()) as { ok?: boolean };
+    backendConnected.value = response.ok && data.ok === true;
+  } catch {
+    backendConnected.value = false;
+  }
+}
+
+async function copyServiceBaseUrl() {
+  try {
+    await navigator.clipboard.writeText(serviceBaseUrl.value);
+    message.success('服务地址已复制');
+  } catch {
+    message.error('复制失败，请手动复制');
+  }
 }
 
 function logout() {
-  clearAdminToken();
-  authed.value = false;
+  session.logout();
+  router.push({ name: 'login' });
 }
+
+onMounted(() => {
+  void checkBackendService();
+});
 </script>
 
 <template>
@@ -119,11 +110,11 @@ function logout() {
       <n-message-provider>
         <n-notification-provider>
           <n-loading-bar-provider>
-            <div v-if="booting" class="boot-screen">
+            <div v-if="!booted" class="boot-screen">
               <n-spin size="small" />
               <span>加载中</span>
             </div>
-            <LoginPage v-else-if="!authed" @authed="handleAuthed" />
+            <RouterView v-else-if="!authed" />
             <n-layout v-else has-sider class="app-shell">
               <n-layout-sider
                 bordered
@@ -136,7 +127,7 @@ function logout() {
                   <span class="brand-mark">A2</span>
                   <span>a2api</span>
                 </div>
-                <n-menu v-model:value="page" :options="menuOptions" :root-indent="18" :indent="12" />
+                <n-menu :value="currentPage" :options="menuOptions" :root-indent="18" :indent="12" @update:value="changePage" />
                 <div class="sider-footer">
                   <n-button block secondary type="error" @click="logout">
                     退出
@@ -149,24 +140,15 @@ function logout() {
                     <p class="eyebrow">管理后台</p>
                     <h1>{{ currentTitle }}</h1>
                   </div>
-                  <n-tag type="success" size="small" round>已连接</n-tag>
+                  <div v-if="backendConnected" class="service-status">
+                    <n-tag type="success" size="small" round>已连接</n-tag>
+                    <button class="service-url" type="button" @click="copyServiceBaseUrl">
+                      {{ serviceBaseUrl }}
+                    </button>
+                  </div>
                 </n-layout-header>
                 <n-layout-content class="content">
-                  <DashboardPage v-if="page === 'dashboard'" />
-                  <AccountsPage v-else-if="page === 'accounts'" />
-                  <RoutesPage v-else-if="page === 'routes'" />
-                  <DownstreamKeysPage v-else-if="page === 'downstreamKeys'" />
-                  <ProxyLogsPage v-else-if="page === 'proxyLogs'" />
-                  <ProgramLogsPage v-else-if="page === 'programLogs'" />
-                  <ModelsPage v-else-if="page === 'models'" />
-                  <ModelTesterPage v-else-if="page === 'modelTester'" />
-                  <MonitorPage v-else-if="page === 'monitor'" />
-                  <EventsPage v-else-if="page === 'events'" />
-                  <NotificationsPage v-else-if="page === 'notifications'" />
-                  <SettingsPage v-else-if="page === 'settings'" />
-                  <OAuthPage v-else-if="page === 'oauth'" />
-                  <ImportExportPage v-else-if="page === 'importExport'" />
-                  <AboutPage v-else-if="page === 'about'" />
+                  <RouterView />
                 </n-layout-content>
               </n-layout>
             </n-layout>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import { api, type SettingsSnapshot } from '@web/api';
 
 const settings = ref<SettingsSnapshot | null>(null);
@@ -9,6 +10,7 @@ const testingProxy = ref(false);
 const resetting = ref(false);
 const error = ref('');
 const message = ref('');
+const notice = useMessage();
 const resetConfirmVisible = ref(false);
 const resetConfirmText = ref('');
 const form = reactive({
@@ -16,6 +18,7 @@ const form = reactive({
   adminIpAllowlistText: '',
   proxyFirstByteTimeoutSec: 0,
   proxyMaxChannelAttempts: 3,
+  defaultRoutingStrategy: 'weighted',
   tokenRouterCacheTtlMs: 1500,
   balanceRefreshCron: '0 * * * *',
   logCleanupCron: '0 6 * * *',
@@ -25,6 +28,22 @@ const form = reactive({
   clearNotificationWebhookUrl: false,
   notifyCooldownSec: 300
 });
+const routingStrategyOptions = [
+  { label: '加权随机', value: 'weighted' },
+  { label: '稳定优先', value: 'stable_first' }
+];
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
+
+function routingStrategyLabel(value: string) {
+  return value === 'stable_first' ? '稳定优先' : '加权随机';
+}
 
 const rows = computed(() => {
   if (!settings.value) return [];
@@ -45,7 +64,12 @@ const rows = computed(() => {
       note: '由 PROXY_MAX_CHANNEL_ATTEMPTS 控制。'
     },
     {
-      label: '路由缓存 TTL',
+      label: '默认调用策略',
+      value: routingStrategyLabel(settings.value.defaultRoutingStrategy),
+      note: '新建自动模型默认使用，可在模型通道抽屉单独覆盖。'
+    },
+    {
+      label: '模型选择缓存 TTL',
       value: `${settings.value.tokenRouterCacheTtlMs} ms`,
       note: '由 TOKEN_ROUTER_CACHE_TTL_MS 控制。'
     },
@@ -82,6 +106,7 @@ function syncForm(snapshot: SettingsSnapshot) {
   form.adminIpAllowlistText = snapshot.adminIpAllowlist.join('\n');
   form.proxyFirstByteTimeoutSec = snapshot.proxyFirstByteTimeoutSec;
   form.proxyMaxChannelAttempts = snapshot.proxyMaxChannelAttempts;
+  form.defaultRoutingStrategy = snapshot.defaultRoutingStrategy;
   form.tokenRouterCacheTtlMs = snapshot.tokenRouterCacheTtlMs;
   form.balanceRefreshCron = snapshot.balanceRefreshCron;
   form.logCleanupCron = snapshot.logCleanupCron;
@@ -101,6 +126,7 @@ function buildPayload() {
       .filter(Boolean),
     proxyFirstByteTimeoutSec: Number(form.proxyFirstByteTimeoutSec) || 0,
     proxyMaxChannelAttempts: Math.max(1, Math.trunc(Number(form.proxyMaxChannelAttempts) || 1)),
+    defaultRoutingStrategy: form.defaultRoutingStrategy,
     tokenRouterCacheTtlMs: Math.max(100, Math.trunc(Number(form.tokenRouterCacheTtlMs) || 100)),
     balanceRefreshCron: form.balanceRefreshCron.trim(),
     logCleanupCron: form.logCleanupCron.trim(),
@@ -225,7 +251,11 @@ onMounted(loadSettings);
           <n-input-number v-model:value="form.proxyMaxChannelAttempts" :min="1" :max="20" />
         </label>
         <label class="field">
-          <span>路由缓存 TTL（ms）</span>
+          <span>默认调用策略</span>
+          <n-select v-model:value="form.defaultRoutingStrategy" :options="routingStrategyOptions" />
+        </label>
+        <label class="field">
+          <span>模型选择缓存 TTL（ms）</span>
           <n-input-number v-model:value="form.tokenRouterCacheTtlMs" :min="100" :step="100" />
         </label>
         <label class="field">
@@ -266,8 +296,6 @@ onMounted(loadSettings);
           <n-button secondary attr-type="button" :disabled="saving" @click="testNotifications">测试通知</n-button>
         </div>
       </form>
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div v-if="loading" class="empty">加载中</div>
       <div v-else class="settings-grid">
         <article v-for="row in rows" :key="row.label" class="setting-item">
@@ -311,8 +339,13 @@ onMounted(loadSettings);
               <td>{{ settings?.proxyMaxChannelAttempts || '-' }}</td>
             </tr>
             <tr>
+              <td class="mono">DEFAULT_ROUTING_STRATEGY</td>
+              <td>新建自动模型默认调用策略。</td>
+              <td>{{ settings ? routingStrategyLabel(settings.defaultRoutingStrategy) : '-' }}</td>
+            </tr>
+            <tr>
               <td class="mono">TOKEN_ROUTER_CACHE_TTL_MS</td>
-              <td>路由缓存有效期。</td>
+              <td>模型选择缓存有效期。</td>
               <td>{{ settings?.tokenRouterCacheTtlMs || '-' }} ms</td>
             </tr>
             <tr>

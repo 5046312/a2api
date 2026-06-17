@@ -30,6 +30,7 @@ import { startBalanceRefreshScheduler } from './services/balanceScheduler.js';
 import { startBackupWebdavScheduler } from './services/backupWebdavService.js';
 import { startProxyLogRetentionScheduler } from './services/proxyLogRetentionService.js';
 import { hydrateRuntimeSettings } from './services/settingsService.js';
+import { sendError } from './shared/errors.js';
 
 runMigrations();
 hydrateRuntimeSettings();
@@ -84,6 +85,14 @@ if (existsSync(webDist)) {
     root: webDist,
     prefix: '/'
   });
+
+  app.setNotFoundHandler((request, reply) => {
+    if (isFrontendHistoryRequest(request.method, request.url, request.headers.accept)) {
+      // Vue Router history 模式刷新后台页面时回退到前端入口。
+      return reply.sendFile('index.html');
+    }
+    return sendError(reply, 404, 'route_not_found', 'Route not found', 'route_not_found');
+  });
 }
 
 await app.listen({ host: config.host, port: config.port });
@@ -95,4 +104,18 @@ function shouldPrintAdminToken(): boolean {
 if (shouldPrintAdminToken()) {
   // 仅开发启动打印登录口令，避免生产日志泄漏。
   console.info(`[a2api] 管理 Token: ${config.authToken}`);
+}
+
+function isFrontendHistoryRequest(method: string, url: string, accept: string | undefined): boolean {
+  if (method !== 'GET') return false;
+  if (!accept?.includes('text/html')) return false;
+  const path = url.split('?')[0] || '/';
+  return ![
+    '/api/',
+    '/v1/',
+    '/v1beta/',
+    '/gemini/',
+    '/responses',
+    '/chat/completions'
+  ].some((prefix) => path.startsWith(prefix));
 }

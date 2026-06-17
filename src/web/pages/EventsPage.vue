@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { onMounted, reactive, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import { api, type EventItem } from '@web/api';
 
 const events = ref<EventItem[]>([]);
@@ -9,6 +9,7 @@ const loading = ref(false);
 const error = ref('');
 const message = ref('');
 const dialog = useDialog();
+const notice = useMessage();
 const filters = reactive({
   type: '',
   level: '',
@@ -20,6 +21,14 @@ const eventTypeOptions = [
   { label: '系统', value: 'system' },
   { label: '账号', value: 'account' }
 ];
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 const eventLevelOptions = [
   { label: '全部级别', value: '' },
   { label: 'Info', value: 'info' },
@@ -136,8 +145,6 @@ onMounted(loadEvents);
         <n-select v-model:value="filters.level" :options="eventLevelOptions" class="toolbar-select" @update:value="loadEvents" />
         <n-select v-model:value="filters.read" :options="readOptions" class="toolbar-select" @update:value="loadEvents" />
       </div>
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>

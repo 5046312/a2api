@@ -14,6 +14,7 @@ export type AppConfig = {
   adminIpAllowlist: string[];
   requestBodyLimit: number;
   proxyMaxChannelAttempts: number;
+  defaultRoutingStrategy: 'weighted' | 'stable_first';
   proxyFirstByteTimeoutSec: number;
   tokenRouterCacheTtlMs: number;
   balanceRefreshCron: string;
@@ -51,6 +52,12 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+function parseRoutingStrategy(value: string | undefined): AppConfig['defaultRoutingStrategy'] {
+  const normalized = value?.trim();
+  if (normalized === 'stable_first') return 'stable_first';
+  return 'weighted';
+}
+
 export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
   const dataDir = resolve(env.DATA_DIR || './data');
   mkdirSync(dataDir, { recursive: true });
@@ -78,6 +85,7 @@ export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
     adminIpAllowlist: parseCsv(env.ADMIN_IP_ALLOWLIST),
     requestBodyLimit: Math.max(1024, Math.trunc(parseNumber(env.REQUEST_BODY_LIMIT, 20 * 1024 * 1024))),
     proxyMaxChannelAttempts: Math.max(1, Math.trunc(parseNumber(env.PROXY_MAX_CHANNEL_ATTEMPTS, 3))),
+    defaultRoutingStrategy: parseRoutingStrategy(env.DEFAULT_ROUTING_STRATEGY),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
     tokenRouterCacheTtlMs: Math.max(100, Math.trunc(parseNumber(env.TOKEN_ROUTER_CACHE_TTL_MS, 1500))),
     balanceRefreshCron: env.BALANCE_REFRESH_CRON?.trim() || '0 * * * *',

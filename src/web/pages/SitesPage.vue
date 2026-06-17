@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { onMounted, reactive, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import { api, type Site, type SiteBatchAction, type SiteEndpoint } from '@web/api';
 
 type SiteForm = {
@@ -35,6 +35,7 @@ const availableModels = ref<string[]>([]);
 const selectedSiteIds = ref<number[]>([]);
 const filters = reactive({ keyword: '', status: '' });
 const dialog = useDialog();
+const notice = useMessage();
 const platformOptions = [
   'openai',
   'new-api',
@@ -75,6 +76,14 @@ const endpointForm = reactive({
   url: '',
   enabled: true,
   sortOrder: 0
+});
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
 });
 
 function resetForm() {
@@ -205,7 +214,7 @@ async function loadSites() {
       clearDisabledModelsPanel();
     }
   } catch (err) {
-    setError(err, '加载站点失败');
+    setError(err, '加载内部配置失败');
   } finally {
     loading.value = false;
   }
@@ -220,7 +229,7 @@ async function loadSiteEndpoints(site: Site) {
     siteEndpoints.value = data.items;
     resetEndpointForm();
   } catch (err) {
-    setError(err, '加载地址池失败');
+    setError(err, '加载端点池失败');
   } finally {
     endpointLoading.value = false;
   }
@@ -253,15 +262,15 @@ async function submit() {
     const payload = buildPayload();
     if (editingId.value) {
       await api.updateSite(editingId.value, payload);
-      message.value = '站点已更新';
+      message.value = '内部配置已更新';
     } else {
       await api.createSite(payload);
-      message.value = '站点已创建';
+      message.value = '内部配置已创建';
     }
     resetForm();
     await loadSites();
   } catch (err) {
-    setError(err, '保存站点失败');
+    setError(err, '保存内部配置失败');
   } finally {
     saving.value = false;
   }
@@ -283,7 +292,7 @@ function editSite(site: Site) {
 
 async function detect() {
   if (!form.url.trim()) {
-    error.value = '请输入站点地址';
+    error.value = '请输入接口地址';
     return;
   }
   saving.value = true;
@@ -293,7 +302,7 @@ async function detect() {
     if (result.platform) form.platform = result.platform;
     message.value = result.message || '检测完成';
   } catch (err) {
-    setError(err, '检测站点失败');
+    setError(err, '检测内部配置失败');
   } finally {
     saving.value = false;
   }
@@ -310,7 +319,7 @@ function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
 }
 
 function removeSite(site: Site) {
-  confirmAction(`删除站点 ${site.name}？`, async () => {
+  confirmAction(`删除内部配置 ${site.name}？`, async () => {
     error.value = '';
     try {
       await api.deleteSite(site.id);
@@ -318,7 +327,7 @@ function removeSite(site: Site) {
       if (disabledModelSite.value?.id === site.id) clearDisabledModelsPanel();
       await loadSites();
     } catch (err) {
-      setError(err, '删除站点失败');
+      setError(err, '删除内部配置失败');
     }
   });
 }
@@ -326,7 +335,7 @@ function removeSite(site: Site) {
 async function batchUpdateSites(action: SiteBatchAction) {
   const ids = selectedSiteIds.value.slice();
   if (ids.length === 0) return;
-  confirmAction(`批量${batchActionLabel(action)} ${ids.length} 个站点？`, async () => {
+  confirmAction(`批量${batchActionLabel(action)} ${ids.length} 个内部配置？`, async () => {
     loading.value = true;
     error.value = '';
     message.value = '';
@@ -336,7 +345,7 @@ async function batchUpdateSites(action: SiteBatchAction) {
       message.value = `批量${batchActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
       await loadSites();
     } catch (err) {
-      setError(err, '批量更新站点失败');
+      setError(err, '批量更新内部配置失败');
     } finally {
       loading.value = false;
     }
@@ -346,7 +355,7 @@ async function batchUpdateSites(action: SiteBatchAction) {
 async function saveDisabledModels() {
   const site = disabledModelSite.value;
   if (!site) {
-    error.value = '请选择站点';
+    error.value = '请选择内部配置';
     return;
   }
   disabledModelsSaving.value = true;
@@ -355,7 +364,7 @@ async function saveDisabledModels() {
   try {
     const result = await api.updateSiteDisabledModels(site.id, disabledModelRows());
     disabledModelsText.value = result.models.join('\n');
-    message.value = result.routeRebuilt ? '禁用模型已保存，路由已重建' : '禁用模型已保存';
+    message.value = result.routeRebuilt ? '禁用模型已保存，模型已重建' : '禁用模型已保存';
   } catch (err) {
     setError(err, '保存禁用模型失败');
   } finally {
@@ -373,7 +382,7 @@ function editEndpoint(endpoint: SiteEndpoint) {
 async function saveEndpoint() {
   const site = endpointSite.value;
   if (!site) {
-    error.value = '请选择站点';
+    error.value = '请选择内部配置';
     return;
   }
   endpointSaving.value = true;
@@ -387,14 +396,14 @@ async function saveEndpoint() {
     };
     if (editingEndpointId.value) {
       await api.updateSiteEndpoint(editingEndpointId.value, payload);
-      message.value = '地址池已更新';
+      message.value = '端点池已更新';
     } else {
       await api.createSiteEndpoint(site.id, payload);
-      message.value = '地址池已新增';
+      message.value = '端点池已新增';
     }
     await loadSiteEndpoints(site);
   } catch (err) {
-    setError(err, '保存地址池失败');
+    setError(err, '保存端点池失败');
   } finally {
     endpointSaving.value = false;
   }
@@ -408,20 +417,20 @@ async function toggleEndpoint(endpoint: SiteEndpoint) {
     await api.updateSiteEndpoint(endpoint.id, { enabled: !endpoint.enabled });
     await loadSiteEndpoints(site);
   } catch (err) {
-    setError(err, '切换地址状态失败');
+    setError(err, '切换端点状态失败');
   }
 }
 
 async function removeEndpoint(endpoint: SiteEndpoint) {
   const site = endpointSite.value;
   if (!site) return;
-  confirmAction(`删除地址 ${endpoint.url}？`, async () => {
+  confirmAction(`删除端点 ${endpoint.url}？`, async () => {
     error.value = '';
     try {
       await api.deleteSiteEndpoint(endpoint.id);
       await loadSiteEndpoints(site);
     } catch (err) {
-      setError(err, '删除地址失败');
+      setError(err, '删除端点失败');
     }
   });
 }
@@ -434,8 +443,8 @@ onMounted(loadSites);
     <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
-          <h2>站点配置</h2>
-          <p class="muted">管理上游 API 站点和代理参数。</p>
+          <h2>内部上游配置</h2>
+          <p class="muted">高级调试入口，主流程请使用上游账号。</p>
         </div>
         <n-button secondary attr-type="button" @click="resetForm">清空</n-button>
       </div>
@@ -445,7 +454,7 @@ onMounted(loadSites);
           <n-input v-model:value="form.name" required />
         </label>
         <label class="field wide">
-          <span>地址</span>
+          <span>接口地址</span>
           <n-input v-model:value="form.url" required placeholder="https://api.example.com" />
         </label>
         <label class="field">
@@ -465,11 +474,11 @@ onMounted(loadSites);
           <n-input-number v-model:value="form.sortOrder" :min="0" :step="1" />
         </label>
         <label class="field">
-          <span>代理地址</span>
+          <span>代理</span>
           <n-input v-model:value="form.proxyUrl" placeholder="可选" />
         </label>
         <label class="check-row">
-          <n-checkbox v-model:checked="form.isPinned">置顶站点</n-checkbox>
+          <n-checkbox v-model:checked="form.isPinned">置顶内部配置</n-checkbox>
         </label>
         <label class="check-row">
           <n-checkbox v-model:checked="form.useSystemProxy">使用系统代理</n-checkbox>
@@ -481,17 +490,15 @@ onMounted(loadSites);
         <div class="form-actions wide">
           <n-button secondary attr-type="button" :disabled="saving" @click="detect">检测平台</n-button>
           <n-button type="primary" attr-type="submit" :disabled="saving">
-            {{ saving ? '保存中' : editingId ? '更新站点' : '创建站点' }}
+            {{ saving ? '保存中' : editingId ? '更新内部配置' : '创建内部配置' }}
           </n-button>
         </div>
       </form>
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
     </n-card>
 
     <n-card class="admin-card" :bordered="false">
       <div class="toolbar">
-        <n-input v-model:value="filters.keyword" placeholder="搜索名称或地址" @keyup.enter="loadSites" />
+        <n-input v-model:value="filters.keyword" placeholder="搜索名称或接口地址" @keyup.enter="loadSites" />
         <n-select v-model:value="filters.status" :options="filterStatusOptions" class="toolbar-select" @update:value="loadSites" />
         <n-button secondary attr-type="button" @click="loadSites">刷新</n-button>
         <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('enable')">批量启用</n-button>
@@ -510,7 +517,7 @@ onMounted(loadSites);
               </th>
               <th>名称</th>
               <th>平台</th>
-              <th>地址</th>
+              <th>接口地址</th>
               <th>状态</th>
               <th>权重</th>
               <th>排序</th>
@@ -533,14 +540,14 @@ onMounted(loadSites);
               <td>{{ site.sortOrder }}</td>
               <td>{{ site.isPinned ? '是' : '否' }}</td>
               <td class="actions">
-                <n-button text attr-type="button" @click="loadSiteEndpoints(site)">地址池</n-button>
+                <n-button text attr-type="button" @click="loadSiteEndpoints(site)">端点池</n-button>
                 <n-button text attr-type="button" @click="loadSiteDisabledModels(site)">禁用模型</n-button>
                 <n-button text attr-type="button" @click="editSite(site)">编辑</n-button>
                 <n-button type="error" text attr-type="button" @click="removeSite(site)">删除</n-button>
               </td>
             </tr>
             <tr v-if="!loading && sites.length === 0">
-              <td class="empty" colspan="9">暂无站点</td>
+              <td class="empty" colspan="9">暂无内部配置</td>
             </tr>
           </tbody>
         </n-table>
@@ -576,15 +583,15 @@ onMounted(loadSites);
     <n-card class="admin-card" :bordered="false" v-if="endpointSite">
       <div class="panel-header">
         <div>
-          <h2>地址池：{{ endpointSite.name }}</h2>
-          <p class="muted">{{ siteEndpoints.length }} 个地址</p>
+          <h2>端点池：{{ endpointSite.name }}</h2>
+          <p class="muted">{{ siteEndpoints.length }} 个端点</p>
         </div>
         <n-button secondary attr-type="button" @click="clearEndpointPanel">关闭</n-button>
       </div>
 
       <form class="form-grid" @submit.prevent="saveEndpoint">
         <label class="field wide">
-          <span>API 地址</span>
+          <span>端点地址</span>
           <n-input v-model:value="endpointForm.url" required placeholder="https://api.example.com" />
         </label>
         <label class="field">
@@ -592,12 +599,12 @@ onMounted(loadSites);
           <n-input-number v-model:value="endpointForm.sortOrder" :min="0" :step="1" />
         </label>
         <label class="check-row">
-          <n-checkbox v-model:checked="endpointForm.enabled">启用地址</n-checkbox>
+          <n-checkbox v-model:checked="endpointForm.enabled">启用端点</n-checkbox>
         </label>
         <div class="form-actions wide">
-          <n-button secondary attr-type="button" :disabled="endpointSaving" @click="resetEndpointForm">清空地址</n-button>
+          <n-button secondary attr-type="button" :disabled="endpointSaving" @click="resetEndpointForm">清空端点</n-button>
           <n-button type="primary" attr-type="submit" :disabled="endpointSaving">
-            {{ endpointSaving ? '保存中' : editingEndpointId ? '更新地址' : '新增地址' }}
+            {{ endpointSaving ? '保存中' : editingEndpointId ? '更新端点' : '新增端点' }}
           </n-button>
         </div>
       </form>
@@ -606,7 +613,7 @@ onMounted(loadSites);
         <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
-              <th>地址</th>
+              <th>端点地址</th>
               <th>状态</th>
               <th>排序</th>
               <th>冷却到</th>
@@ -634,7 +641,7 @@ onMounted(loadSites);
               </td>
             </tr>
             <tr v-if="!endpointLoading && siteEndpoints.length === 0">
-              <td class="empty" colspan="6">暂无地址</td>
+              <td class="empty" colspan="6">暂无端点</td>
             </tr>
           </tbody>
         </n-table>

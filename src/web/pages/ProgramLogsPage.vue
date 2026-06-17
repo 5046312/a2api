@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { onMounted, reactive, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import { api, type EventItem } from '@web/api';
 
 const PAGE_SIZE = 50;
@@ -14,6 +14,7 @@ const loadingMore = ref(false);
 const error = ref('');
 const message = ref('');
 const dialog = useDialog();
+const notice = useMessage();
 const rowLoading = reactive<Record<number, boolean>>({});
 const filters = reactive({
   type: '',
@@ -24,12 +25,19 @@ const logTypeOptions = [
   { label: '全部类型', value: '' },
   { label: '代理', value: 'proxy' },
   { label: '余额', value: 'balance' },
-  { label: '凭据', value: 'token' },
   { label: '账号', value: 'account' },
   { label: '系统', value: 'system' },
   { label: '状态', value: 'status' },
   { label: '上游公告', value: 'site_notice' }
 ];
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 const logLevelOptions = [
   { label: '全部级别', value: '' },
   { label: '信息', value: 'info' },
@@ -195,9 +203,6 @@ onMounted(reloadLogs);
         <n-select v-model:value="filters.level" :options="logLevelOptions" class="toolbar-select" @update:value="reloadLogs" />
         <n-select v-model:value="filters.read" :options="readOptions" class="toolbar-select" @update:value="reloadLogs" />
       </div>
-
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
 
       <div class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">

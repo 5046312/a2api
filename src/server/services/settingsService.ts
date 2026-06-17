@@ -15,6 +15,7 @@ const settingKeys = [
   'adminIpAllowlist',
   'proxyFirstByteTimeoutSec',
   'proxyMaxChannelAttempts',
+  'defaultRoutingStrategy',
   'tokenRouterCacheTtlMs',
   'balanceRefreshCron',
   'logCleanupCron',
@@ -32,6 +33,7 @@ export const settingsPayloadSchema = z.object({
   adminIpAllowlist: z.array(z.string().trim()).optional(),
   proxyFirstByteTimeoutSec: z.number().int().min(0).optional(),
   proxyMaxChannelAttempts: z.number().int().min(1).max(20).optional(),
+  defaultRoutingStrategy: z.enum(['weighted', 'stable_first']).optional(),
   tokenRouterCacheTtlMs: z.number().int().min(100).optional(),
   balanceRefreshCron: z.string().trim().optional(),
   logCleanupCron: z.string().trim().optional(),
@@ -97,6 +99,7 @@ function snapshotFromConfig(): SettingsSnapshot {
     adminIpAllowlist: config.adminIpAllowlist,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     proxyMaxChannelAttempts: config.proxyMaxChannelAttempts,
+    defaultRoutingStrategy: config.defaultRoutingStrategy,
     tokenRouterCacheTtlMs: config.tokenRouterCacheTtlMs,
     balanceRefreshCron: config.balanceRefreshCron,
     logCleanupCron: config.logCleanupCron,
@@ -134,6 +137,10 @@ function applySettings(payload: SettingsPayload): void {
   if (payload.adminIpAllowlist !== undefined) config.adminIpAllowlist = normalizeAdminIpAllowlist(payload.adminIpAllowlist);
   if (payload.proxyFirstByteTimeoutSec !== undefined) config.proxyFirstByteTimeoutSec = payload.proxyFirstByteTimeoutSec;
   if (payload.proxyMaxChannelAttempts !== undefined) config.proxyMaxChannelAttempts = payload.proxyMaxChannelAttempts;
+  if (payload.defaultRoutingStrategy !== undefined) {
+    config.defaultRoutingStrategy = payload.defaultRoutingStrategy;
+    clearTokenRouterCache();
+  }
   if (payload.balanceRefreshCron !== undefined) updateBalanceRefreshCron(payload.balanceRefreshCron);
   if (payload.logCleanupCron !== undefined || payload.logCleanupRetentionDays !== undefined) {
     const retentionPayload: { cron?: string; retentionDays?: number } = {};

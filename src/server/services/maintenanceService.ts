@@ -92,10 +92,10 @@ export function clearRuntimeCache(): ClearRuntimeCacheResult {
   const deletedTokenRoutes = db.delete(schema.tokenRoutes).run().changes;
   clearTokenRouterCache();
 
-  const message = '缓存已清理，请重新刷新模型或重建路由';
+  const message = '缓存已清理，请重新刷新模型或重建模型';
   recordMaintenanceEvent(
     '缓存已清理',
-    `已清理模型可用性 ${deletedModelAvailability} 条、Token 模型可用性 ${deletedTokenModelAvailability} 条、路由 ${deletedTokenRoutes} 条、通道 ${deletedRouteChannels} 条`
+    `已清理模型可用性 ${deletedModelAvailability} 条、Token 模型可用性 ${deletedTokenModelAvailability} 条、模型 ${deletedTokenRoutes} 条、通道 ${deletedRouteChannels} 条`
   );
 
   return {
@@ -138,7 +138,7 @@ export function clearUsageData(): ClearUsageDataResult {
   const message = '使用统计已清理';
   recordMaintenanceEvent(
     '使用统计已清理',
-    `已清理代理日志 ${deletedProxyLogs} 条、debug trace ${deletedProxyDebugTraces} 条、debug attempt ${deletedProxyDebugAttempts} 条，并重置路由、账号和下游 Key 用量`
+    `已清理代理日志 ${deletedProxyLogs} 条、debug trace ${deletedProxyDebugTraces} 条、debug attempt ${deletedProxyDebugAttempts} 条，并重置模型、账号和下游 Key 用量`
   );
 
   return {

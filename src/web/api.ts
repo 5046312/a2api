@@ -78,7 +78,6 @@ export type Account = {
   unitCost: number | null;
   lastBalanceRefresh: string | null;
   apiKeyMasked: string;
-  apiTokenMasked: string;
   proxyUrl: string | null;
   extraConfig: Record<string, unknown> | null;
   modelCount: number;
@@ -197,26 +196,6 @@ export type BalanceRefreshAllResult = {
   skipped: number;
 };
 
-export type AccountToken = {
-  id: number;
-  accountId: number;
-  accountName: string | null;
-  siteName: string | null;
-  name: string;
-  tokenMasked: string;
-  tokenGroup: string | null;
-  enabled: boolean;
-  isDefault: boolean;
-  valueStatus: string;
-};
-
-export type AccountTokenSyncResult = {
-  created: number;
-  updated: number;
-  maskedPending: number;
-  preservedLocalFields: string[];
-};
-
 export type RouteItem = {
   id: number;
   modelPattern: string;
@@ -228,6 +207,8 @@ export type RouteItem = {
   successCount: number;
   failCount: number;
 };
+
+export type RoutingStrategy = 'weighted' | 'stable_first';
 
 export type RouteLiteItem = {
   id: number;
@@ -250,7 +231,6 @@ export type RouteChannel = {
   id: number;
   routeId: number;
   accountId: number;
-  tokenId: number | null;
   sourceModel: string;
   priority: number;
   weight: number;
@@ -258,19 +238,18 @@ export type RouteChannel = {
   successCount: number;
   failCount: number;
   cooldownUntil: string | null;
+  lastFailAt: string | null;
+  lastFailureReason: string | null;
   siteName: string | null;
   accountName: string | null;
-  tokenName: string | null;
 };
 
 export type RouteDecisionCandidate = {
   channelId: number;
   accountId: number;
-  tokenId: number | null;
   siteId: number;
   siteName: string;
   accountName: string | null;
-  tokenName: string | null;
   priority: number;
   weight: number;
   score: number;
@@ -350,9 +329,7 @@ export type DownstreamKeyBatchResult = {
   reset: number;
 };
 
-export type CredentialRef =
-  | { kind: 'account'; siteId: number; accountId: number }
-  | { kind: 'account_token'; siteId: number; accountId: number; tokenId: number };
+export type CredentialRef = { kind: 'account'; siteId: number; accountId: number };
 
 export type ProxyLog = {
   id: number;
@@ -424,6 +401,7 @@ export type SettingsSnapshot = {
   systemProxyUrl: string;
   proxyFirstByteTimeoutSec: number;
   proxyMaxChannelAttempts: number;
+  defaultRoutingStrategy: RoutingStrategy;
   tokenRouterCacheTtlMs: number;
   balanceRefreshCron: string;
   logCleanupCron: string;
@@ -656,7 +634,6 @@ export type StatsMarketplaceItem = {
   model: string;
   siteCount: number;
   accountCount: number;
-  tokenCount: number;
   minCost: number;
   avgLatencyMs: number;
   successRate: number;
@@ -866,7 +843,7 @@ export const api = {
     apiRequest<SiteAvailableModels>(`/api/sites/${siteId}/available-models`),
   listAccounts: (query: Record<string, QueryValue> = {}) =>
     apiRequest<ListResponse<Account>>(buildQuery('/api/accounts', query)),
-  verifyAccountToken: (body: unknown) => apiRequest('/api/accounts/verify-token', { method: 'POST', body }),
+  verifyAccountApiKey: (body: unknown) => apiRequest('/api/accounts/verify-token', { method: 'POST', body }),
   createAccount: (body: unknown) => apiRequest<Account>('/api/accounts', { method: 'POST', body }),
   updateAccount: (id: number, body: unknown) => apiRequest<Account>(`/api/accounts/${id}`, { method: 'PUT', body }),
   deleteAccount: (id: number) => apiRequest<{ ok: boolean }>(`/api/accounts/${id}`, { method: 'DELETE' }),
@@ -898,31 +875,22 @@ export const api = {
     apiRequest<BalanceRefreshAllResult>('/api/accounts/balance/refresh-all', { method: 'POST' }),
   listAccountModels: (id: number) =>
     apiRequest<AccountModels>(`/api/accounts/${id}/models`),
+  previewAccountModels: (id: number) =>
+    apiRequest<AccountModels>(`/api/accounts/${id}/models/preview`, { method: 'POST' }),
   updateAccountModels: (id: number, models: string[]) =>
     apiRequest<AccountModelsUpdateResult>(`/api/accounts/${id}/models`, { method: 'PUT', body: { models } }),
   refreshModels: (id: number) =>
     apiRequest<{ accountId: number; created: number; updated: number; removed: number; routeRebuilt: boolean }>(`/api/accounts/${id}/models/refresh`, {
       method: 'POST'
     }),
-  listTokens: (query: Record<string, QueryValue> = {}) =>
-    apiRequest<ListResponse<AccountToken>>(buildQuery('/api/account-tokens', query)),
-  createToken: (body: unknown) => apiRequest<AccountToken>('/api/account-tokens', { method: 'POST', body }),
-  updateToken: (id: number, body: unknown) =>
-    apiRequest<AccountToken>(`/api/account-tokens/${id}`, { method: 'PUT', body }),
-  batchSetTokensEnabled: (ids: number[], enabled: boolean) =>
-    apiRequest<{ ok: boolean; updated: number }>('/api/account-tokens/batch-enabled', {
-      method: 'POST',
-      body: { ids, enabled }
-    }),
-  deleteToken: (id: number) => apiRequest<{ ok: boolean }>(`/api/account-tokens/${id}`, { method: 'DELETE' }),
-  syncAccountTokens: (accountId: number) =>
-    apiRequest<AccountTokenSyncResult>('/api/account-tokens/sync', { method: 'POST', body: { accountId } }),
   listRoutes: () => apiRequest<{ items: RouteItem[]; total: number }>('/api/routes'),
   listRoutesLite: () => apiRequest<RouteLiteItem[]>('/api/routes/lite'),
   listRoutesSummary: () => apiRequest<RouteSummaryItem[]>('/api/routes/summary'),
   updateRoute: (id: number, body: unknown) => apiRequest(`/api/routes/${id}`, { method: 'PUT', body }),
   rebuildRoutes: () => apiRequest('/api/routes/rebuild', { method: 'POST' }),
   listRouteChannels: (id: number) => apiRequest<{ items: RouteChannel[]; total: number }>(`/api/routes/${id}/channels`),
+  updateRouteChannel: (routeId: number, channelId: number, body: unknown) =>
+    apiRequest<RouteChannel>(`/api/routes/${routeId}/channels/${channelId}`, { method: 'PUT', body }),
   explainRouteDecision: (id: number, model: string, options: { downstreamApiKeyId?: number; forcedChannelId?: number } = {}) =>
     apiRequest<RouteDecision>(buildQuery(`/api/routes/${id}/decision`, {
       model,

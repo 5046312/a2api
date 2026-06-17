@@ -413,7 +413,7 @@ function importAccounts(
           username: row.username,
           credentialMode: row.credentialMode,
           accessToken: row.accessToken,
-          apiToken: null,
+          apiToken: row.apiToken,
           balance: row.balance,
           balanceUsed: row.balanceUsed,
           quota: row.quota,
@@ -430,59 +430,15 @@ function importAccounts(
         })
         .where(eq(schema.accounts.id, existing.id))
         .run();
-      upsertImportedAccountApiKey(existing.id, row.apiToken);
       accountIdMap.set(row.id, existing.id);
       summary.updated += 1;
     } else {
-      const inserted = db.insert(schema.accounts).values({ ...withoutId(row), siteId, apiToken: null }).returning().get();
-      upsertImportedAccountApiKey(inserted.id, row.apiToken);
+      const inserted = db.insert(schema.accounts).values({ ...withoutId(row), siteId }).returning().get();
       accountIdMap.set(row.id, inserted.id);
       summary.created += 1;
     }
     summary.importedAccounts += 1;
   }
-}
-
-function upsertImportedAccountApiKey(accountId: number, apiKey: string | null): void {
-  const token = apiKey?.trim();
-  if (!token) return;
-  const now = nowIso();
-  const current = db
-    .select()
-    .from(schema.accountTokens)
-    .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.isDefault, true)))
-    .get();
-  db.update(schema.accountTokens).set({ isDefault: false }).where(eq(schema.accountTokens.accountId, accountId)).run();
-  if (current) {
-    db.update(schema.accountTokens)
-      .set({
-        token,
-        valueStatus: 'ready',
-        source: 'account_default',
-        enabled: true,
-        isDefault: true,
-        updatedAt: now
-      })
-      .where(eq(schema.accountTokens.id, current.id))
-      .run();
-    return;
-  }
-  db.insert(schema.accountTokens)
-    .values({
-      accountId,
-      name: 'default',
-      token,
-      tokenGroup: null,
-      valueStatus: 'ready',
-      source: 'account_default',
-      enabled: true,
-      isDefault: true,
-      localNameLocked: true,
-      localStatusLocked: true,
-      createdAt: now,
-      updatedAt: now
-    })
-    .run();
 }
 
 function importAccountTokens(
@@ -497,6 +453,11 @@ function importAccountTokens(
     const accountId = accountIdMap.get(row.accountId);
     if (!accountId) {
       skip(warnings, summary, `Token skipped, missing account #${row.accountId}`);
+      continue;
+    }
+    if (row.source === 'account_default') {
+      // 旧备份里的默认账号 key 合并回账号 API Key，避免重新生成 default 记录。
+      db.update(schema.accounts).set({ apiToken: row.token, updatedAt: now }).where(eq(schema.accounts.id, accountId)).run();
       continue;
     }
     const existing = db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, accountId)).all().find((item) => item.name === row.name);

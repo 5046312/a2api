@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
-import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyLog, type Site } from '@web/api';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
+import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyLog } from '@web/api';
 
-const sites = ref<Site[]>([]);
 const accounts = ref<Account[]>([]);
 const downstreamKeys = ref<DownstreamKey[]>([]);
 const logs = ref<ProxyLog[]>([]);
@@ -13,10 +13,10 @@ const loading = ref(false);
 const loadingDetailId = ref<number | null>(null);
 const loadingTrace = ref(false);
 const error = ref('');
+const notice = useMessage();
 const filters = reactive({
   status: '',
   model: '',
-  siteId: '',
   accountId: '',
   downstreamApiKeyId: '',
   isStream: '',
@@ -34,14 +34,13 @@ const streamOptions = [
   { label: '流式请求', value: 'true' },
   { label: '非流式请求', value: 'false' }
 ];
-const siteOptions = computed(() => [
-  { label: '全部上游地址', value: '' },
-  ...sites.value.map((site) => ({ label: site.name, value: String(site.id) }))
-]);
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 const accountOptions = computed(() => [
-  { label: '全部账号', value: '' },
+  { label: '全部上游账号', value: '' },
   ...accounts.value.map((account) => ({
-    label: `${account.siteName || '-'} / ${account.username || `#${account.id}`}`,
+    label: account.name || account.username || `上游账号 ${account.id}`,
     value: String(account.id)
   }))
 ]);
@@ -75,14 +74,12 @@ async function loadPage() {
   loading.value = true;
   error.value = '';
   try {
-    const [siteData, accountData, keyData, logData, traceData] = await Promise.all([
-      api.listSites({ pageSize: 200 }),
+    const [accountData, keyData, logData, traceData] = await Promise.all([
       api.listAccounts({ pageSize: 200 }),
       api.listDownstreamKeys(),
       api.listProxyLogs({ pageSize: 50 }),
       api.listProxyDebugTraces({ limit: 50 })
     ]);
-    sites.value = siteData.items;
     accounts.value = accountData.items;
     downstreamKeys.value = keyData.items;
     logs.value = logData.items;
@@ -103,7 +100,6 @@ async function loadLogs() {
     const data = await api.listProxyLogs({
       status: filters.status,
       model: filters.model,
-      siteId: filters.siteId,
       accountId: filters.accountId,
       downstreamApiKeyId: filters.downstreamApiKeyId,
       isStream: filters.isStream || undefined,
@@ -169,13 +165,12 @@ onMounted(loadPage);
       <div class="panel-header">
         <div>
           <h2>代理日志</h2>
-          <p class="muted">查看 `/v1/*` 请求路由结果和错误。</p>
+          <p class="muted">查看 `/v1/*` 请求模型选择结果和错误。</p>
         </div>
         <n-button secondary attr-type="button" @click="loadLogs">刷新</n-button>
       </div>
       <div class="toolbar">
         <n-select v-model:value="filters.status" :options="logStatusOptions" class="toolbar-select" @update:value="loadLogs" />
-        <n-select v-model:value="filters.siteId" :options="siteOptions" class="toolbar-select" @update:value="loadLogs" />
         <n-select v-model:value="filters.accountId" :options="accountOptions" class="toolbar-select" @update:value="loadLogs" />
         <n-select
           v-model:value="filters.downstreamApiKeyId"
@@ -188,7 +183,6 @@ onMounted(loadPage);
         <n-input v-model:value="filters.from" placeholder="起始 ISO 时间" @keyup.enter="loadLogs" />
         <n-input v-model:value="filters.to" placeholder="结束 ISO 时间" @keyup.enter="loadLogs" />
       </div>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
@@ -198,8 +192,7 @@ onMounted(loadPage);
               <th>HTTP</th>
               <th>请求模型</th>
               <th>实际模型</th>
-              <th>上游地址</th>
-              <th>账号</th>
+              <th>上游账号</th>
               <th>通道</th>
               <th>下游 Key</th>
               <th>流式</th>
@@ -217,7 +210,6 @@ onMounted(loadPage);
               <td>{{ log.httpStatus || '-' }}</td>
               <td class="mono">{{ log.modelRequested || '-' }}</td>
               <td class="mono">{{ log.modelActual || '-' }}</td>
-              <td>{{ log.siteName || '-' }}</td>
               <td>{{ log.accountName || (log.accountId ? `#${log.accountId}` : '-') }}</td>
               <td>{{ log.channelId || '-' }}</td>
               <td>{{ log.downstreamKeyName || (log.downstreamApiKeyId ? `#${log.downstreamApiKeyId}` : '-') }}</td>
@@ -233,7 +225,7 @@ onMounted(loadPage);
               </td>
             </tr>
             <tr v-if="!loading && logs.length === 0">
-              <td class="empty" colspan="15">暂无日志</td>
+              <td class="empty" colspan="14">暂无日志</td>
             </tr>
           </tbody>
         </n-table>
@@ -257,7 +249,7 @@ onMounted(loadPage);
               <th>模型</th>
               <th>状态</th>
               <th>HTTP</th>
-              <th>路由</th>
+              <th>模型</th>
               <th>通道</th>
               <th>尝试</th>
               <th>操作</th>
@@ -298,14 +290,12 @@ onMounted(loadPage);
             <tr>
               <th>时间</th>
               <td class="mono">{{ selectedLog.createdAt }}</td>
-              <th>路由 / 通道</th>
+              <th>模型 / 通道</th>
               <td>{{ selectedLog.routeId || '-' }} / {{ selectedLog.channelId || '-' }}</td>
             </tr>
             <tr>
-              <th>上游地址</th>
-              <td>{{ selectedLog.siteName || '-' }}</td>
-              <th>账号</th>
-              <td>{{ selectedLog.accountName || (selectedLog.accountId ? `#${selectedLog.accountId}` : '-') }}</td>
+              <th>上游账号</th>
+              <td colspan="3">{{ selectedLog.accountName || (selectedLog.accountId ? `#${selectedLog.accountId}` : '-') }}</td>
             </tr>
             <tr>
               <th>下游 Key</th>

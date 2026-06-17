@@ -20,6 +20,12 @@ export type AccountModelsResult = {
   models: string[];
 };
 
+type DiscoveredAccountModel = {
+  name: string;
+  contextLength: number | null;
+  disabled: boolean;
+};
+
 export type AccountModelsUpdateResult = AccountModelsResult & {
   created: number;
   updated: number;
@@ -37,6 +43,14 @@ export async function listAccountModels(accountId: number): Promise<AccountModel
   return { accountId, models: rows.map((row) => row.modelName) };
 }
 
+export async function previewAccountModels(accountId: number): Promise<AccountModelsResult> {
+  // 预览只返回可选择模型，不落库，确认保存由账号模型接口完成。
+  const models = normalizeModelNames(
+    (await discoverAccountModels(accountId)).filter((model) => !model.disabled).map((model) => model.name)
+  );
+  return { accountId, models };
+}
+
 export async function updateAccountModels(accountId: number, models: string[]): Promise<AccountModelsUpdateResult> {
   await assertAccountExists(accountId);
   const normalizedModels = normalizeModelNames(models);
@@ -48,7 +62,7 @@ export async function updateAccountModels(accountId: number, models: string[]): 
     .all();
   const existingByModel = new Map(existingRows.map((row) => [row.modelName, row]));
 
-  // 固定模型采用全量替换：未提交的模型立即下线，避免旧路由继续可用。
+  // 固定模型采用全量替换：未提交的模型立即下线，避免旧模型通道继续可用。
   await db
     .update(schema.modelAvailability)
     .set({ available: false, checkedAt: now })
@@ -87,49 +101,22 @@ export async function updateAccountModels(accountId: number, models: string[]): 
 }
 
 export async function refreshAccountModels(accountId: number, options: { rebuild?: boolean } = {}): Promise<ModelRefreshResult> {
+  const models = await discoverAccountModels(accountId);
   const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get();
   if (!account) throw new Error('Account not found');
-  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, account.siteId)).get();
-  if (!site) throw new Error('Site not found');
-
-  const credential = await resolveDefaultAccountCredential(account.id, {
-    apiToken: account.apiToken,
-    accessToken: account.accessToken,
-    includeAccessToken: true
-  });
-  const token = credential?.token || '';
-  if (!token) throw new Error('Account has no usable token');
-
-  const adapter = getAdapter(site.platform);
-  const models = await adapter.getModels({
-    siteId: site.id,
-    baseUrl: site.url,
-    platform: site.platform as SitePlatform,
-    proxyUrl: accountProxyUrl(account.extraConfig) || site.proxyUrl,
-    customHeaders: parseJsonObject(site.customHeaders) as Record<string, string> | null,
-    token,
-    credentialMode: account.credentialMode === 'oauth' ? 'oauth' : 'apikey'
-  });
-
   let created = 0;
   let updated = 0;
   let removed = 0;
   const now = nowIso();
-  const disabledModels = await db
-    .select({ modelName: schema.siteDisabledModels.modelName })
-    .from(schema.siteDisabledModels)
-    .where(eq(schema.siteDisabledModels.siteId, site.id))
-    .all();
-  const disabledPatterns = disabledModels.map((row) => row.modelName);
 
   for (const model of models) {
     const existing = await db
       .select()
       .from(schema.modelAvailability)
-      .where(and(eq(schema.modelAvailability.accountId, account.id), eq(schema.modelAvailability.modelName, model.name)))
+      .where(and(eq(schema.modelAvailability.accountId, accountId), eq(schema.modelAvailability.modelName, model.name)))
       .get();
-    // 站点禁用模型在发现阶段即标记不可用，避免后续路由误用旧数据。
-    if (isModelDisabled(model.name, disabledPatterns)) {
+    // 站点禁用模型在发现阶段即标记不可用，避免后续模型选择误用旧数据。
+    if (model.disabled) {
       if (existing && existing.available) {
         await db
           .update(schema.modelAvailability)
@@ -155,7 +142,7 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
       await db
         .insert(schema.modelAvailability)
         .values({
-          accountId: account.id,
+          accountId,
           modelName: model.name,
           available: true,
           contextLength: model.contextLength ?? null,
@@ -172,6 +159,45 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
   }
 
   return { accountId, created, updated, removed, routeRebuilt };
+}
+
+async function discoverAccountModels(accountId: number): Promise<DiscoveredAccountModel[]> {
+  const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get();
+  if (!account) throw new Error('Account not found');
+  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, account.siteId)).get();
+  if (!site) throw new Error('Site not found');
+
+  const credential = await resolveDefaultAccountCredential(account.id, {
+    apiToken: account.apiToken,
+    accessToken: account.accessToken,
+    includeAccessToken: true
+  });
+  const token = credential?.token || '';
+  if (!token) throw new Error('Account has no usable token');
+
+  const adapter = getAdapter(site.platform);
+  const models = await adapter.getModels({
+    siteId: site.id,
+    baseUrl: site.url,
+    platform: site.platform as SitePlatform,
+    proxyUrl: accountProxyUrl(account.extraConfig) || site.proxyUrl,
+    customHeaders: parseJsonObject(site.customHeaders) as Record<string, string> | null,
+    token,
+    credentialMode: account.credentialMode === 'oauth' ? 'oauth' : 'apikey'
+  });
+  const disabledModels = await db
+    .select({ modelName: schema.siteDisabledModels.modelName })
+    .from(schema.siteDisabledModels)
+    .where(eq(schema.siteDisabledModels.siteId, site.id))
+    .all();
+  const disabledPatterns = disabledModels.map((row) => row.modelName);
+  // 预览和写入使用同一过滤规则，避免站点禁用模型进入账号白名单。
+  return models
+    .map((model) => ({
+      name: model.name,
+      contextLength: model.contextLength ?? null,
+      disabled: isModelDisabled(model.name, disabledPatterns)
+    }));
 }
 
 async function assertAccountExists(accountId: number): Promise<void> {

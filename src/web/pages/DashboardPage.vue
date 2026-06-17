@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import { api, type ModelUsageItem, type SiteUsageItem, type StatsOverview } from '@web/api';
 
 const overview = ref<StatsOverview | null>(null);
@@ -7,6 +8,11 @@ const siteUsage = ref<SiteUsageItem[]>([]);
 const modelUsage = ref<ModelUsageItem[]>([]);
 const loading = ref(false);
 const error = ref('');
+const notice = useMessage();
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 
 const cards = computed(() => {
   const data = overview.value;
@@ -16,7 +22,7 @@ const cards = computed(() => {
     { label: '今日用量', value: data ? formatInteger(data.todayTokens) : '-' },
     { label: '今日费用', value: data ? formatCost(data.todayCost) : '-' },
     { label: '活跃上游数', value: data ? formatInteger(data.activeSiteCount) : '-' },
-    { label: '异常账号数', value: data ? formatInteger(data.abnormalAccountCount) : '-' }
+    { label: '异常上游账号', value: data ? formatInteger(data.abnormalAccountCount) : '-' }
   ];
 });
 
@@ -68,7 +74,6 @@ onMounted(loadOverview);
         <n-button secondary :loading="loading" @click="loadOverview">刷新</n-button>
       </template>
       <p class="muted">今日统计按服务端本地日期计算。</p>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <n-grid class="stats-grid" :cols="3" :x-gap="12" :y-gap="12" responsive="screen">
         <n-gi v-for="card in cards" :key="card.label">
           <n-card class="stat-card" size="small" :bordered="false">
@@ -86,7 +91,7 @@ onMounted(loadOverview);
             <thead>
               <tr>
                 <th>日期</th>
-                <th>上游地址</th>
+                <th>上游</th>
                 <th>请求</th>
                 <th>成功率</th>
                 <th>用量</th>

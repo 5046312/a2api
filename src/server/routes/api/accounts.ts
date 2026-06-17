@@ -11,7 +11,7 @@ import {
   verifyAccountToken
 } from '../../services/accountService.js';
 import { refreshAccountBalance, refreshAllAccountBalances } from '../../services/balanceService.js';
-import { listAccountModels, refreshAccountModels, updateAccountModels } from '../../services/modelDiscoveryService.js';
+import { listAccountModels, previewAccountModels, refreshAccountModels, updateAccountModels } from '../../services/modelDiscoveryService.js';
 import { rebuildRoutes } from '../../services/routeRefreshService.js';
 import { sendError } from '../../shared/errors.js';
 import { compactObject } from '../../shared/object.js';
@@ -128,6 +128,15 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Update account models failed';
       return sendError(reply, message === 'Account not found' ? 404 : 400, 'validation_error', message, 'update_models_failed');
+    }
+  });
+
+  app.post('/api/accounts/:id/models/preview', async (request, reply) => {
+    const params = idParamsSchema.parse(request.params);
+    try {
+      return await previewAccountModels(params.id);
+    } catch (error) {
+      return sendError(reply, 400, 'validation_error', error instanceof Error ? error.message : 'Preview models failed', 'preview_models_failed');
     }
   });
 

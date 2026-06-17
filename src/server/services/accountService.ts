@@ -7,7 +7,7 @@ import { normalizeBaseUrl } from '../shared/http.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { maskSecret } from '../shared/mask.js';
 import { nowIso } from '../shared/time.js';
-import { resolveDefaultAccountCredential, upsertDefaultAccountApiKey } from './accountTokenService.js';
+import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
 export const accountPayloadSchema = z.object({
   siteId: z.number().int().positive().optional(),
@@ -190,7 +190,7 @@ export async function createAccount(payload: AccountPayload) {
       username: payload.name ?? payload.username ?? null,
       credentialMode: payload.credentialMode,
       accessToken: payload.accessToken ?? null,
-      apiToken: null,
+      apiToken: payload.apiKey ?? payload.apiToken ?? null,
       unitCost: payload.unitCost ?? null,
       status: payload.status ?? 'active',
       isPinned: payload.isPinned ?? false,
@@ -201,7 +201,7 @@ export async function createAccount(payload: AccountPayload) {
     })
     .returning()
     .get();
-  const credential = await upsertDefaultAccountApiKey(inserted.id, payload.apiKey ?? payload.apiToken);
+  const credential = await resolveDefaultAccountCredential(inserted.id, { apiToken: inserted.apiToken });
   return toAccountView({
     ...inserted,
     defaultApiKeyMasked: credential?.masked ?? '',
@@ -218,7 +218,7 @@ export async function updateAccount(id: number, payload: Partial<AccountPayload>
   if (!current) return null;
   const site = await resolveSiteForAccountPayload(payload, current);
   const nextExtraConfig = accountExtraConfigForUpdate(current, payload);
-  const credential = await upsertAccountCredentialForUpdate(current, payload);
+  const nextApiToken = accountApiTokenForUpdate(current, payload);
   const updated = await db
     .update(schema.accounts)
     .set({
@@ -226,7 +226,7 @@ export async function updateAccount(id: number, payload: Partial<AccountPayload>
       username: payload.name === undefined && payload.username === undefined ? current.username : payload.name ?? payload.username ?? null,
       credentialMode: payload.credentialMode ?? current.credentialMode,
       accessToken: payload.accessToken === undefined ? current.accessToken : payload.accessToken,
-      apiToken: null,
+      apiToken: nextApiToken,
       unitCost: payload.unitCost === undefined ? current.unitCost : payload.unitCost,
       status: payload.status ?? current.status,
       isPinned: payload.isPinned ?? current.isPinned,
@@ -238,6 +238,7 @@ export async function updateAccount(id: number, payload: Partial<AccountPayload>
     .returning()
     .get();
   const nextSite = site ?? (await findSiteById(updated.siteId));
+  const credential = await resolveDefaultAccountCredential(updated.id, { apiToken: updated.apiToken });
   return toAccountView({
     ...updated,
     defaultApiKeyMasked: credential?.masked ?? '',
@@ -307,15 +308,12 @@ function accountExtraConfigForUpdate(current: AccountRow, payload: Partial<Accou
   return nextExtraConfig ? stringifyJson(nextExtraConfig) : null;
 }
 
-async function upsertAccountCredentialForUpdate(current: AccountRow, payload: Partial<AccountPayload>) {
+function accountApiTokenForUpdate(current: AccountRow, payload: Partial<AccountPayload>) {
   const nextToken = payload.apiKey ?? payload.apiToken;
   if (nextToken !== undefined && nextToken !== null && nextToken.trim() !== '') {
-    return upsertDefaultAccountApiKey(current.id, nextToken);
+    return nextToken;
   }
-  if (current.apiToken && current.apiToken.trim()) {
-    return upsertDefaultAccountApiKey(current.id, current.apiToken);
-  }
-  return resolveDefaultAccountCredential(current.id);
+  return current.apiToken;
 }
 
 async function resolveSiteForAccountPayload(payload: Partial<AccountPayload>, current?: AccountRow): Promise<SiteRow | null> {

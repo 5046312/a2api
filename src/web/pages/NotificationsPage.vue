@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import { api, type NotificationSettings } from '@web/api';
 
 const settings = ref<NotificationSettings | null>(null);
@@ -7,6 +8,7 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref('');
 const message = ref('');
+const notice = useMessage();
 const form = reactive({
   webhookEnabled: false,
   webhookUrl: '',
@@ -26,6 +28,14 @@ const rows = computed(() => [
     note: '避免同类异常高频发送通知。'
   }
 ]);
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 
 function syncForm(snapshot: NotificationSettings) {
   form.webhookEnabled = snapshot.webhookEnabled;
@@ -127,8 +137,6 @@ onMounted(loadSettings);
         </div>
       </form>
 
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
     </n-card>
 
     <n-card class="admin-card" :bordered="false">

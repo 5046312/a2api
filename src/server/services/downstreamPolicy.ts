@@ -51,16 +51,13 @@ export function isCredentialAllowed(
   }
 
   const accountRef = { kind: 'account' as const, siteId: input.siteId, accountId: input.accountId };
-  const tokenRef = input.tokenId === null
-    ? null
-    : { kind: 'account_token' as const, siteId: input.siteId, accountId: input.accountId, tokenId: input.tokenId };
 
   if (policy.allowedCredentialRefs.length > 0) {
-    const allowed = policy.allowedCredentialRefs.some((ref) => credentialRefEquals(ref, accountRef) || (tokenRef && credentialRefEquals(ref, tokenRef)));
+    const allowed = policy.allowedCredentialRefs.some((ref) => credentialRefEquals(ref, accountRef));
     if (!allowed) return false;
   }
 
-  return !policy.excludedCredentialRefs.some((ref) => credentialRefEquals(ref, accountRef) || (tokenRef && credentialRefEquals(ref, tokenRef)));
+  return !policy.excludedCredentialRefs.some((ref) => credentialRefEquals(ref, accountRef));
 }
 
 export function isModelAllowedByPolicy(model: string, routeId: number, policy: DownstreamRoutingPolicy): boolean {
@@ -70,10 +67,10 @@ export function isModelAllowedByPolicy(model: string, routeId: number, policy: D
 }
 
 export function credentialRefEquals(left: CredentialRef, right: CredentialRef): boolean {
-  if (left.kind !== right.kind) return false;
+  // 旧 account_token 策略按账号折算，当前路由不再按独立 key 生成通道。
   if (left.siteId !== right.siteId || left.accountId !== right.accountId) return false;
   if (left.kind === 'account_token' && right.kind === 'account_token') {
     return left.tokenId === right.tokenId;
   }
-  return left.kind === 'account';
+  return true;
 }

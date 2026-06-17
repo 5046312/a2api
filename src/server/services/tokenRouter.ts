@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
@@ -27,11 +27,9 @@ export type SelectedChannel = {
 export type RouteDecisionCandidate = {
   channelId: number;
   accountId: number;
-  tokenId: number | null;
   siteId: number;
   siteName: string;
   accountName: string | null;
-  tokenName: string | null;
   priority: number;
   weight: number;
   score: number;
@@ -200,7 +198,7 @@ export async function explainRouteDecision(
       selectedAccountId: null,
       selectedSiteId: null,
       priority: null,
-      summary: ['未找到启用路由或启用通道'],
+      summary: ['未找到启用模型或启用通道'],
       candidates: [],
       filtered: []
     };
@@ -227,8 +225,8 @@ export async function explainRouteDecision(
       selectedSiteId: null,
       priority: null,
       summary: options.forcedChannelId
-        ? [`命中路由，但指定通道 #${options.forcedChannelId} 不可用`]
-        : ['命中路由，但没有可用通道'],
+        ? [`命中模型，但指定通道 #${options.forcedChannelId} 不可用`]
+        : ['命中模型，但没有可用通道'],
       candidates,
       filtered
     };
@@ -254,7 +252,7 @@ export async function explainRouteDecision(
     selectedSiteId: selected.siteId,
     priority,
     summary: [
-      `命中路由：${route.modelPattern}`,
+      `命中模型：${route.modelPattern}`,
       ...(options.forcedChannelId ? [`指定通道：#${options.forcedChannelId}`] : []),
       `策略：${route.routingStrategy}`,
       `优先级桶：${priority}`,
@@ -364,7 +362,7 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
     .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .leftJoin(schema.accountTokens, eq(schema.accountTokens.id, schema.routeChannels.tokenId))
-    .where(and(eq(schema.tokenRoutes.enabled, true), eq(schema.routeChannels.enabled, true)))
+    .where(and(eq(schema.tokenRoutes.enabled, true), eq(schema.routeChannels.enabled, true), isNull(schema.routeChannels.tokenId)))
     .orderBy(asc(schema.routeChannels.priority), desc(schema.routeChannels.weight), asc(schema.routeChannels.id))
     .all();
   const disabledBySiteId = await loadDisabledModelsBySiteId();
@@ -381,8 +379,7 @@ async function resolveAccountLevelCredential(row: Omit<CandidateRow, 'siteDisabl
   if (!credential) return row;
   return {
     ...row,
-    accountApiToken: credential.token,
-    tokenName: row.tokenName || 'default'
+    accountApiToken: credential.token
   };
 }
 
@@ -427,7 +424,6 @@ function isCandidateUsable(row: CandidateRow): boolean {
   if (row.siteStatus !== 'active') return false;
   if (row.accountStatus !== 'active') return false;
   if (isModelDisabled(row.sourceModel || row.modelPattern, row.siteDisabledModels)) return false;
-  if (row.tokenId !== null && (!row.tokenEnabled || row.tokenStatus !== 'ready')) return false;
   if (!row.tokenValue && !row.accountApiToken) return false;
   if (row.cooldownUntil && Date.parse(row.cooldownUntil) > Date.now()) return false;
   return true;
@@ -447,12 +443,10 @@ function buildDecisionCandidate(
   if (row.siteStatus !== 'active') reasons.push('site_inactive');
   if (row.accountStatus !== 'active') reasons.push('account_inactive');
   if (isModelDisabled(row.sourceModel || row.modelPattern, row.siteDisabledModels)) reasons.push('site_model_disabled');
-  if (row.tokenId !== null && !row.tokenEnabled) reasons.push('token_disabled');
-  if (row.tokenId !== null && row.tokenStatus !== 'ready') reasons.push('token_not_ready');
-  if (!row.tokenValue && !row.accountApiToken) reasons.push('missing_credential');
+  if (!row.tokenValue && !row.accountApiToken) reasons.push('missing_account_api_key');
   if (!isModelAllowedByPolicy(requestedModel, row.routeId, policy)) reasons.push('model_denied_by_downstream_key');
   if (!isCredentialAllowed(policy, { siteId: row.siteId, accountId: row.accountId, tokenId: row.tokenId })) {
-    reasons.push('credential_denied_by_downstream_key');
+    reasons.push('account_denied_by_downstream_key');
   }
   if (row.cooldownUntil && Date.parse(row.cooldownUntil) > Date.now()) reasons.push('cooldown');
 
@@ -461,11 +455,9 @@ function buildDecisionCandidate(
   return {
     channelId: row.channelId,
     accountId: row.accountId,
-    tokenId: row.tokenId,
     siteId: row.siteId,
     siteName: row.siteName,
     accountName: row.accountName,
-    tokenName: row.tokenName,
     priority: row.priority,
     weight: row.weight,
     score,

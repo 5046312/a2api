@@ -1,21 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import { api, type StatsMarketplaceItem } from '@web/api';
 
-type SortKey = 'accountCount' | 'tokenCount' | 'successRate' | 'avgLatencyMs' | 'minCost';
+type SortKey = 'accountCount' | 'successRate' | 'avgLatencyMs' | 'minCost';
 
 const models = ref<StatsMarketplaceItem[]>([]);
 const loading = ref(false);
 const error = ref('');
 const keyword = ref('');
 const sortKey = ref<SortKey>('accountCount');
+const notice = useMessage();
 const sortOptions = [
-  { label: '按账号数', value: 'accountCount' },
-  { label: '按凭据数', value: 'tokenCount' },
+  { label: '按上游账号数', value: 'accountCount' },
   { label: '按成功率', value: 'successRate' },
   { label: '按延迟', value: 'avgLatencyMs' },
   { label: '按成本', value: 'minCost' }
 ];
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
 
 const filteredModels = computed(() => {
   const text = keyword.value.trim().toLowerCase();
@@ -26,14 +31,12 @@ const filteredModels = computed(() => {
 const summaryCards = computed(() => {
   const modelCount = models.value.length;
   const accountCount = models.value.reduce((sum, item) => sum + item.accountCount, 0);
-  const tokenCount = models.value.reduce((sum, item) => sum + item.tokenCount, 0);
   const averageSuccessRate = models.value.length > 0
     ? models.value.reduce((sum, item) => sum + item.successRate, 0) / models.value.length
     : 0;
   return [
     { label: '模型数', value: formatInteger(modelCount) },
-    { label: '覆盖账号', value: formatInteger(accountCount) },
-    { label: '凭据数', value: formatInteger(tokenCount) },
+    { label: '覆盖上游账号', value: formatInteger(accountCount) },
     { label: '平均成功率', value: formatPercent(averageSuccessRate) }
   ];
 });
@@ -89,13 +92,12 @@ onMounted(loadModels);
       <div class="panel-header">
         <div>
           <h2>模型广场</h2>
-          <p class="muted">按活跃上游、账号、内部凭据和最近代理日志聚合。</p>
+          <p class="muted">按上游账号和最近代理日志聚合。</p>
         </div>
         <n-button secondary attr-type="button" :disabled="loading" @click="loadModels">
           {{ loading ? '刷新中' : '刷新' }}
         </n-button>
       </div>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="stats-grid">
         <div v-for="card in summaryCards" :key="card.label" class="stat-card">
           <span class="stat-label">{{ card.label }}</span>
@@ -108,7 +110,7 @@ onMounted(loadModels);
       <div class="panel-header">
         <div>
           <h2>模型覆盖</h2>
-          <p class="muted">最低成本来自账号单位成本，成功率按最近 7 天代理日志计算。</p>
+          <p class="muted">最低成本来自上游账号单位成本，成功率按最近 7 天代理日志计算。</p>
         </div>
       </div>
       <div class="toolbar">
@@ -121,9 +123,7 @@ onMounted(loadModels);
           <thead>
             <tr>
               <th>模型</th>
-              <th>上游地址</th>
-              <th>账号</th>
-              <th>凭据</th>
+              <th>上游账号</th>
               <th>最低成本</th>
               <th>平均延迟</th>
               <th>成功率</th>
@@ -132,9 +132,7 @@ onMounted(loadModels);
           <tbody>
             <tr v-for="item in filteredModels" :key="item.model">
               <td class="mono">{{ item.model }}</td>
-              <td>{{ formatInteger(item.siteCount) }}</td>
               <td>{{ formatInteger(item.accountCount) }}</td>
-              <td>{{ formatInteger(item.tokenCount) }}</td>
               <td class="mono">{{ formatCost(item.minCost) }}</td>
               <td class="mono">{{ formatLatency(item.avgLatencyMs) }}</td>
               <td>
@@ -144,7 +142,7 @@ onMounted(loadModels);
               </td>
             </tr>
             <tr v-if="!loading && filteredModels.length === 0">
-              <td class="empty" colspan="7">暂无模型数据</td>
+              <td class="empty" colspan="5">暂无模型数据</td>
             </tr>
           </tbody>
         </n-table>

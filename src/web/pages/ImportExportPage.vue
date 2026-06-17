@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import {
   api,
   type BackupImportResult,
@@ -19,6 +19,7 @@ const error = ref('');
 const message = ref('');
 const importResult = ref<BackupImportResult | null>(null);
 const dialog = useDialog();
+const notice = useMessage();
 const webdavLoading = ref(false);
 const webdavPasswordMasked = ref('');
 const webdavState = ref<BackupWebdavState>({ lastSyncAt: null, lastError: null });
@@ -45,6 +46,14 @@ const backupTypeOptions = [
   { label: '偏好设置', value: 'preferences' }
 ];
 
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
+
 const summaryRows = computed(() => {
   const summary = importResult.value?.summary;
   if (!summary) return [];
@@ -54,8 +63,7 @@ const summaryRows = computed(() => {
     { label: '跳过', value: summary.skipped },
     { label: '上游', value: summary.importedSites },
     { label: '账号', value: summary.importedAccounts },
-    { label: '凭据', value: summary.importedTokens },
-    { label: '路由', value: summary.importedRoutes },
+    { label: '模型', value: summary.importedRoutes },
     { label: '下游 Key', value: summary.importedDownstreamKeys },
     { label: '文件', value: summary.importedProxyFiles },
     { label: '视频任务', value: summary.importedProxyVideoTasks },
@@ -362,7 +370,7 @@ onMounted(() => {
         </div>
       </form>
       <p class="muted">上次同步：{{ webdavState.lastSyncAt || '-' }}</p>
-      <n-alert v-if="webdavState.lastError" type="error" :bordered="false">WebDAV 错误：{{ webdavState.lastError }}</n-alert>
+      <p v-if="webdavState.lastError" class="muted error-cell">WebDAV 错误：{{ webdavState.lastError }}</p>
     </n-card>
 
     <n-card class="admin-card" :bordered="false">
@@ -412,9 +420,6 @@ onMounted(() => {
         </div>
       </div>
     </n-card>
-
-    <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-    <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
 
     <n-card class="admin-card" :bordered="false" v-if="importResult">
       <div class="panel-header">

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useMessage } from 'naive-ui';
 import {
   api,
   type DownstreamKey,
@@ -24,6 +25,7 @@ const sending = ref(false);
 const loadingTrace = ref(false);
 const error = ref('');
 const message = ref('');
+const notice = useMessage();
 const form = reactive({
   model: '',
   downstreamApiKeyId: '',
@@ -31,6 +33,14 @@ const form = reactive({
   system: '',
   prompt: 'hello',
   temperature: ''
+});
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
 });
 
 const modelOptions = computed(() => {
@@ -59,7 +69,7 @@ const downstreamKeyOptions = computed(() => [
 const channelOptions = computed(() => [
   { label: '自动选择', value: '' },
   ...channels.value.map((channel) => ({
-    label: `#${channel.id} / ${channel.siteName || '-'} / ${channel.accountName || channel.accountId}`,
+    label: `#${channel.id} / ${channel.accountName || channel.accountId}`,
     value: String(channel.id)
   }))
 ]);
@@ -154,7 +164,7 @@ async function explainSelectedRoute() {
   try {
     decision.value = await api.explainRouteDecision(route.id, form.model.trim(), buildDecisionOptions());
   } catch (err) {
-    setError(err, '加载路由解释失败');
+    setError(err, '加载模型解释失败');
   }
 }
 
@@ -215,8 +225,6 @@ onMounted(loadData);
           {{ loading ? '刷新中' : '刷新模型' }}
         </n-button>
       </div>
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <form class="form-grid" @submit.prevent="sendTest">
         <label class="field">
           <span>模型</span>
@@ -231,7 +239,7 @@ onMounted(loadData);
           <n-input v-model:value="form.temperature" placeholder="默认" />
         </label>
         <label class="field">
-          <span>路由</span>
+          <span>模型</span>
           <n-input :value="selectedRoute ? selectedRoute.modelPattern : '自动匹配'" disabled />
         </label>
         <label class="field">
@@ -255,7 +263,7 @@ onMounted(loadData);
           <n-button type="primary" attr-type="submit" :disabled="sending || !form.model">
             {{ sending ? '请求中' : '发送测试' }}
           </n-button>
-          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainSelectedRoute">解释路由</n-button>
+          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainSelectedRoute">解释模型</n-button>
         </div>
       </form>
     </n-card>
@@ -269,7 +277,6 @@ onMounted(loadData);
           </div>
           <n-button secondary
             v-if="responseTraceId"
-           
             attr-type="button"
             :disabled="loadingTrace"
             @click="loadTrace(responseTraceId)"
@@ -283,8 +290,8 @@ onMounted(loadData);
       <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
-            <h2>路由解释</h2>
-            <p class="muted">{{ decision ? decision.summary.join('；') : '选择模型后查看命中路由' }}</p>
+            <h2>模型解释</h2>
+            <p class="muted">{{ decision ? decision.summary.join('；') : '选择模型后查看命中结果' }}</p>
           </div>
         </div>
         <div v-if="decision" class="table-wrap">
@@ -292,8 +299,7 @@ onMounted(loadData);
             <thead>
               <tr>
                 <th>通道</th>
-                <th>上游地址</th>
-                <th>账号</th>
+                <th>上游账号</th>
                 <th>分数</th>
                 <th>概率</th>
                 <th>状态</th>
@@ -302,7 +308,6 @@ onMounted(loadData);
             <tbody>
               <tr v-for="candidate in decision.candidates.slice(0, 8)" :key="candidate.channelId">
                 <td>#{{ candidate.channelId }}</td>
-                <td>{{ candidate.siteName }}</td>
                 <td>{{ candidate.accountName || candidate.accountId }}</td>
                 <td>{{ candidate.score.toFixed(2) }}</td>
                 <td>{{ (candidate.probability * 100).toFixed(1) }}%</td>
@@ -313,12 +318,12 @@ onMounted(loadData);
                 </td>
               </tr>
               <tr v-if="decision.candidates.length === 0">
-                <td class="empty" colspan="6">暂无候选通道</td>
+                <td class="empty" colspan="5">暂无候选通道</td>
               </tr>
             </tbody>
           </n-table>
         </div>
-        <div v-else class="empty">暂无路由解释</div>
+        <div v-else class="empty">暂无模型解释</div>
       </n-card>
     </div>
 

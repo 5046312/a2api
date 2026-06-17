@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import { api, type OAuthConnectionInfo, type OAuthConnectionsResponse, type OAuthProviderInfo, type OAuthProvidersResponse, type OAuthSessionInfo } from '@web/api';
 
 const data = ref<OAuthProvidersResponse | null>(null);
@@ -15,10 +15,23 @@ const message = ref('');
 const callbackUrl = ref('');
 const importPayload = ref('');
 const dialog = useDialog();
+const notice = useMessage();
 
 const providers = computed(() => data.value?.providers || []);
 const connectionItems = computed(() => connections.value?.items || []);
 const systemProxyStatus = computed(() => data.value?.defaults.systemProxyConfigured ? '已配置' : '未配置');
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
+
+watch(connectionsError, (value) => {
+  if (value) notice.error(value);
+});
 
 async function loadProviders() {
   loading.value = true;
@@ -38,14 +51,14 @@ async function loadConnections() {
   try {
     connections.value = await api.getOAuthConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '加载 OAuth 账号失败';
+    connectionsError.value = err instanceof Error ? err.message : '加载 OAuth 上游账号失败';
   } finally {
     connectionsLoading.value = false;
   }
 }
 
 function formatConnectionIdentity(connection: { email: string | null; username: string | null; accountKey: string | null }) {
-  return connection.email || connection.username || connection.accountKey || '未命名账号';
+  return connection.email || connection.username || connection.accountKey || '未命名上游账号';
 }
 
 async function startProvider(provider: OAuthProviderInfo) {
@@ -85,7 +98,7 @@ async function importCredentials() {
   try {
     const payload = JSON.parse(importPayload.value || '{}') as unknown;
     const result = await api.importOAuthCredentials(payload);
-    message.value = `已导入 ${result.imported} 个 OAuth 账号`;
+    message.value = `已导入 ${result.imported} 个 OAuth 上游账号`;
     importPayload.value = '';
     await loadConnections();
   } catch (err) {
@@ -101,10 +114,10 @@ async function toggleConnection(connection: OAuthConnectionInfo) {
   message.value = '';
   try {
     await api.updateOAuthConnection(connection.accountId, { enabled: !connection.enabled });
-    message.value = `OAuth 账号已${connection.enabled ? '停用' : '启用'}`;
+    message.value = `OAuth 上游账号已${connection.enabled ? '停用' : '启用'}`;
     await loadConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '更新 OAuth 账号失败';
+    connectionsError.value = err instanceof Error ? err.message : '更新 OAuth 上游账号失败';
   } finally {
     mutatingConnectionId.value = null;
   }
@@ -114,7 +127,7 @@ async function removeConnection(connection: OAuthConnectionInfo) {
   const name = formatConnectionIdentity(connection);
   dialog.warning({
     title: '确认操作',
-    content: `删除 OAuth 账号 ${name}？`,
+    content: `删除 OAuth 上游账号 ${name}？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -123,10 +136,10 @@ async function removeConnection(connection: OAuthConnectionInfo) {
       message.value = '';
       try {
         await api.deleteOAuthConnection(connection.accountId);
-        message.value = 'OAuth 账号已删除';
+        message.value = 'OAuth 上游账号已删除';
         await loadConnections();
       } catch (err) {
-        connectionsError.value = err instanceof Error ? err.message : '删除 OAuth 账号失败';
+        connectionsError.value = err instanceof Error ? err.message : '删除 OAuth 上游账号失败';
       } finally {
         mutatingConnectionId.value = null;
       }
@@ -140,10 +153,10 @@ async function refreshConnection(connection: OAuthConnectionInfo) {
   message.value = '';
   try {
     await api.refreshOAuthConnection(connection.accountId);
-    message.value = 'OAuth 账号已刷新';
+    message.value = 'OAuth 上游账号已刷新';
     await loadConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '刷新 OAuth 账号失败';
+    connectionsError.value = err instanceof Error ? err.message : '刷新 OAuth 上游账号失败';
   } finally {
     mutatingConnectionId.value = null;
   }
@@ -183,7 +196,6 @@ onMounted(async () => {
       </div>
 
       <p class="muted">系统代理：{{ systemProxyStatus }}</p>
-      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div v-if="loading" class="empty">加载中</div>
       <div v-else class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">
@@ -208,7 +220,7 @@ onMounted(async () => {
               <td>{{ provider.requiresProjectId ? '需要' : '不需要' }}</td>
               <td>
                 <div class="model-list">
-                  <n-tag v-if="provider.supportsDirectAccountRouting" size="small">直接路由</n-tag>
+                  <n-tag v-if="provider.supportsDirectAccountRouting" size="small">直接模型</n-tag>
                   <n-tag v-if="provider.supportsCloudValidation" size="small">云端校验</n-tag>
                   <n-tag v-if="provider.supportsNativeProxy" size="small">原生代理</n-tag>
                 </div>
@@ -251,24 +263,21 @@ onMounted(async () => {
     <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
-          <h2>OAuth 账号</h2>
-          <p class="muted">当前读取账号表中的 OAuth 账号，支持本地刷新、quota 和删除。</p>
+          <h2>OAuth 上游账号</h2>
+          <p class="muted">当前读取上游账号表中的 OAuth 上游账号，支持本地刷新、quota 和删除。</p>
         </div>
         <n-button secondary attr-type="button" :disabled="connectionsLoading" @click="loadConnections">
           {{ connectionsLoading ? '刷新中' : '刷新' }}
         </n-button>
       </div>
 
-      <n-alert v-if="connectionsError" type="error" :bordered="false">{{ connectionsError }}</n-alert>
-      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
       <div v-if="connectionsLoading" class="empty">加载中</div>
       <div v-else class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
-              <th>账号</th>
+              <th>上游账号</th>
               <th>Provider</th>
-              <th>上游地址</th>
               <th>状态</th>
               <th>模型</th>
               <th>通道</th>
@@ -284,10 +293,6 @@ onMounted(async () => {
                 <p class="muted mono">#{{ connection.accountId }}</p>
               </td>
               <td>{{ connection.provider }}</td>
-              <td>
-                <span>{{ connection.site?.name || '-' }}</span>
-                <p v-if="connection.site" class="muted mono">{{ connection.site.platform }}</p>
-              </td>
               <td>
                 <n-tag size="small" :type="connection.status === 'healthy' ? 'success' : 'error'">
                   {{ connection.status === 'healthy' ? '正常' : '异常' }}
@@ -306,7 +311,6 @@ onMounted(async () => {
               <td class="mono">{{ connection.proxyUrl || '-' }}</td>
               <td class="actions">
                 <n-button text
-                 
                   attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="toggleConnection(connection)"
@@ -314,7 +318,6 @@ onMounted(async () => {
                   {{ connection.enabled ? '停用' : '启用' }}
                 </n-button>
                 <n-button text
-                 
                   attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="refreshConnection(connection)"
@@ -322,7 +325,6 @@ onMounted(async () => {
                   刷新
                 </n-button>
                 <n-button text
-                 
                   attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="refreshQuota(connection)"
@@ -330,7 +332,6 @@ onMounted(async () => {
                   Quota
                 </n-button>
                 <n-button type="error" text
-                 
                   attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="removeConnection(connection)"
@@ -340,7 +341,7 @@ onMounted(async () => {
               </td>
             </tr>
             <tr v-if="connectionItems.length === 0">
-              <td colspan="9" class="empty">暂无 OAuth 账号</td>
+              <td colspan="8" class="empty">暂无 OAuth 上游账号</td>
             </tr>
           </tbody>
         </n-table>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
-import { useDialog } from 'naive-ui';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useDialog, useMessage } from 'naive-ui';
 import { api, type Account, type AccountBatchAction } from '@web/api';
 
 const defaultPlatformOptions = [
@@ -92,12 +92,16 @@ const customModelName = ref('');
 const loadingModels = ref(false);
 const savingModels = ref(false);
 const syncingModels = ref(false);
+const syncModelModalVisible = ref(false);
+const syncModelOptions = ref<string[]>([]);
+const selectedSyncModels = ref<string[]>([]);
 const modelDrawerError = ref('');
 const modelDrawerMessage = ref('');
 const selectedAccountIds = ref<number[]>([]);
 const error = ref('');
 const message = ref('');
 const dialog = useDialog();
+const notice = useMessage();
 const accountForm = reactive({
   name: '',
   baseUrl: '',
@@ -134,6 +138,25 @@ const credentialModeOptions = [
 const modelPresetOptions = computed(() =>
   presetModelsForPlatform(modelDrawerAccount.value?.platform).filter((model) => !accountModels.value.includes(model))
 );
+const allSyncModelsSelected = computed(() =>
+  syncModelOptions.value.length > 0 && syncModelOptions.value.every((model) => selectedSyncModels.value.includes(model))
+);
+
+watch(message, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(error, (value) => {
+  if (value) notice.error(value);
+});
+
+watch(modelDrawerMessage, (value) => {
+  if (value) notice.success(value);
+});
+
+watch(modelDrawerError, (value) => {
+  if (value) notice.error(value);
+});
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -148,7 +171,7 @@ function formatTime(value: string | null | undefined) {
 }
 
 function accountLabel(account: Account) {
-  return account.name || account.username || account.baseUrl || `账号 ${account.id}`;
+  return account.name || account.username || `上游账号 ${account.id}`;
 }
 
 function modelActionLabel(account: Account) {
@@ -162,6 +185,10 @@ function presetModelsForPlatform(platform: string | null | undefined) {
   if (normalized === 'claude') return claudePresetModels;
   if (openaiCompatiblePlatforms.has(normalized)) return openaiPresetModels;
   return Array.from(new Set([...openaiPresetModels, ...claudePresetModels, ...geminiPresetModels]));
+}
+
+function sortModelNames(models: string[]) {
+  return models.slice().sort((left, right) => left.localeCompare(right));
 }
 
 function batchAccountActionLabel(action: AccountBatchAction) {
@@ -250,6 +277,9 @@ function resetModelDrawer() {
   modelDrawerAccount.value = null;
   accountModels.value = [];
   customModelName.value = '';
+  syncModelModalVisible.value = false;
+  syncModelOptions.value = [];
+  selectedSyncModels.value = [];
   modelDrawerError.value = '';
   modelDrawerMessage.value = '';
 }
@@ -274,9 +304,9 @@ async function loadAccountModels(accountId: number) {
   modelDrawerError.value = '';
   try {
     const result = await api.listAccountModels(accountId);
-    accountModels.value = result.models;
+    accountModels.value = sortModelNames(result.models);
   } catch (err) {
-    modelDrawerError.value = err instanceof Error ? err.message : '加载账号模型失败';
+    modelDrawerError.value = err instanceof Error ? err.message : '加载上游账号模型失败';
   } finally {
     loadingModels.value = false;
   }
@@ -289,7 +319,7 @@ function addModel(model: string) {
     modelDrawerMessage.value = '模型已存在';
     return;
   }
-  accountModels.value = [...accountModels.value, modelName];
+  accountModels.value = sortModelNames([...accountModels.value, modelName]);
   customModelName.value = '';
   modelDrawerMessage.value = '';
 }
@@ -303,6 +333,20 @@ function clearModelDraft() {
   modelDrawerMessage.value = '已清空当前模型草稿，保存后生效';
 }
 
+function isSyncModelSelected(model: string) {
+  return selectedSyncModels.value.includes(model);
+}
+
+function toggleSyncModel(model: string, checked: boolean) {
+  selectedSyncModels.value = checked
+    ? Array.from(new Set([...selectedSyncModels.value, model]))
+    : selectedSyncModels.value.filter((item) => item !== model);
+}
+
+function toggleAllSyncModels(checked: boolean) {
+  selectedSyncModels.value = checked ? syncModelOptions.value.slice() : [];
+}
+
 async function syncAccountModels() {
   const account = modelDrawerAccount.value;
   if (!account) return;
@@ -310,16 +354,21 @@ async function syncAccountModels() {
   modelDrawerError.value = '';
   modelDrawerMessage.value = '';
   try {
-    const refreshed = await api.refreshModels(account.id);
-    const result = await api.listAccountModels(account.id);
-    accountModels.value = result.models;
-    modelDrawerMessage.value = `同步完成：新增 ${refreshed.created}，更新 ${refreshed.updated}，移除 ${refreshed.removed}`;
-    await loadAll();
+    const result = await api.previewAccountModels(account.id);
+    syncModelOptions.value = sortModelNames(result.models);
+    selectedSyncModels.value = syncModelOptions.value.slice();
+    syncModelModalVisible.value = true;
   } catch (err) {
     modelDrawerError.value = err instanceof Error ? err.message : '同步上游模型失败';
   } finally {
     syncingModels.value = false;
   }
+}
+
+function confirmSyncModels() {
+  accountModels.value = sortModelNames(selectedSyncModels.value);
+  modelDrawerMessage.value = `已选择 ${accountModels.value.length} 个上游模型，保存后生效`;
+  syncModelModalVisible.value = false;
 }
 
 async function saveAccountModels() {
@@ -330,12 +379,12 @@ async function saveAccountModels() {
   modelDrawerMessage.value = '';
   try {
     const result = await api.updateAccountModels(account.id, accountModels.value);
-    accountModels.value = result.models;
-    message.value = `账号模型已保存：${result.models.length} 个`;
+    accountModels.value = sortModelNames(result.models);
+    message.value = `上游账号模型已保存：${result.models.length} 个`;
     showModelDrawer.value = false;
     await loadAll();
   } catch (err) {
-    modelDrawerError.value = err instanceof Error ? err.message : '保存账号模型失败';
+    modelDrawerError.value = err instanceof Error ? err.message : '保存上游账号模型失败';
   } finally {
     savingModels.value = false;
   }
@@ -349,7 +398,7 @@ async function loadAll() {
     accounts.value = accountData.items;
     selectedAccountIds.value = selectedAccountIds.value.filter((id) => accounts.value.some((account) => account.id === id));
   } catch (err) {
-    setError(err, '加载账号失败');
+    setError(err, '加载上游账号失败');
   } finally {
     loading.value = false;
   }
@@ -362,7 +411,7 @@ async function loadPlatformOptions() {
       platformOptions.value = data.brands;
     }
   } catch {
-    // 平台列表加载失败时保留默认选项，避免账号表单不可用。
+    // 平台列表加载失败时保留默认选项，避免上游账号表单不可用。
   }
 }
 
@@ -382,7 +431,7 @@ function parseCustomHeaders(): Record<string, string> | null {
 
 async function detectPlatform() {
   if (!accountForm.baseUrl.trim()) {
-    error.value = '请输入 Base URL';
+    error.value = '请输入接口地址';
     return;
   }
   detecting.value = true;
@@ -405,7 +454,7 @@ async function detectPlatform() {
 async function verifyApiKey() {
   const apiKey = accountForm.apiKey.trim();
   if (!accountForm.baseUrl.trim() || !apiKey) {
-    error.value = '请先填写 Base URL 和 API Key';
+    error.value = '请先填写接口地址和 API Key';
     return;
   }
   verifying.value = true;
@@ -422,7 +471,7 @@ async function verifyApiKey() {
       payload.proxyUrl = accountForm.proxyUrl.trim() || null;
       payload.customHeaders = parseCustomHeaders();
     }
-    const result = await api.verifyAccountToken(payload) as { ok?: boolean; models?: unknown[] };
+    const result = await api.verifyAccountApiKey(payload) as { ok?: boolean; models?: unknown[] };
     message.value = result.ok ? `验证通过，发现 ${result.models?.length || 0} 个模型` : '验证完成，但未确认 API Key 类型';
   } catch (err) {
     setError(err, '验证 API Key 失败');
@@ -457,7 +506,7 @@ async function createAccount() {
     if (editingAccountId.value) {
       if (apiKey) payload.apiKey = apiKey;
       await api.updateAccount(editingAccountId.value, payload);
-      message.value = '账号已更新';
+      message.value = '上游账号已更新';
     } else {
       if (!apiKey) {
         error.value = '请输入 API Key';
@@ -465,12 +514,12 @@ async function createAccount() {
       }
       payload.apiKey = apiKey;
       await api.createAccount(payload);
-      message.value = '账号已创建';
+      message.value = '上游账号已创建';
     }
     showAccountDrawer.value = false;
     await loadAll();
   } catch (err) {
-    setError(err, '保存账号失败');
+    setError(err, '保存上游账号失败');
   } finally {
     saving.value = false;
   }
@@ -519,13 +568,13 @@ function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
 }
 
 function removeAccount(account: Account) {
-  confirmAction(`删除账号 ${accountLabel(account)}？`, async () => {
+  confirmAction(`删除上游账号 ${accountLabel(account)}？`, async () => {
     error.value = '';
     try {
       await api.deleteAccount(account.id);
       await loadAll();
     } catch (err) {
-      setError(err, '删除账号失败');
+      setError(err, '删除上游账号失败');
     }
   });
 }
@@ -533,7 +582,7 @@ function removeAccount(account: Account) {
 async function batchUpdateAccounts(action: AccountBatchAction) {
   const ids = selectedAccountIds.value.slice();
   if (ids.length === 0) return;
-  confirmAction(`批量${batchAccountActionLabel(action)} ${ids.length} 个账号？`, async () => {
+  confirmAction(`批量${batchAccountActionLabel(action)} ${ids.length} 个上游账号？`, async () => {
     saving.value = true;
     error.value = '';
     message.value = '';
@@ -543,7 +592,7 @@ async function batchUpdateAccounts(action: AccountBatchAction) {
       message.value = `批量${batchAccountActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
       await loadAll();
     } catch (err) {
-      setError(err, '批量更新账号失败');
+      setError(err, '批量更新上游账号失败');
     } finally {
       saving.value = false;
     }
@@ -566,17 +615,15 @@ onMounted(() => {
       :close-on-esc="!saving"
       @after-leave="resetAccountForm"
     >
-      <n-drawer-content :title="editingAccountId ? '编辑账号' : '新增账号'" :closable="!saving">
-        <p class="muted">维护账号的 Base URL 和 API Key。</p>
-        <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
-        <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+      <n-drawer-content :title="editingAccountId ? '编辑上游账号' : '新增上游账号'" :closable="!saving">
+        <p class="muted">维护上游账号的接口地址和 API Key。</p>
         <form class="form-grid single" @submit.prevent="createAccount">
           <label class="field">
             <span>名称</span>
             <n-input v-model:value="accountForm.name" placeholder="OpenAI 主账号" />
           </label>
           <label class="field">
-            <span>Base URL</span>
+            <span>接口地址</span>
             <n-input v-model:value="accountForm.baseUrl" placeholder="https://api.openai.com" required />
           </label>
           <label class="field">
@@ -596,7 +643,7 @@ onMounted(() => {
           </label>
           <template v-if="showAdvanced">
             <label class="field">
-              <span>凭据模式</span>
+              <span>认证方式</span>
               <n-select v-model:value="accountForm.credentialMode" :options="credentialModeOptions" />
             </label>
             <label class="field">
@@ -604,7 +651,7 @@ onMounted(() => {
               <n-input v-model:value="accountForm.unitCost" placeholder="每 100 万用量单位" />
             </label>
             <label class="field">
-              <span>账号代理</span>
+              <span>上游账号代理</span>
               <n-input v-model:value="accountForm.proxyUrl" placeholder="http://127.0.0.1:7890" />
             </label>
             <label class="check-row">
@@ -619,12 +666,12 @@ onMounted(() => {
               <n-input-number v-model:value="accountForm.sortOrder" :min="0" :step="1" />
             </label>
             <label class="check-row">
-              <n-checkbox v-model:checked="accountForm.isPinned">置顶账号</n-checkbox>
+              <n-checkbox v-model:checked="accountForm.isPinned">置顶上游账号</n-checkbox>
             </label>
           </template>
           <div class="form-actions">
             <n-button type="primary" attr-type="submit" :disabled="saving">
-              {{ saving ? '保存中' : editingAccountId ? '保存修改' : '创建账号' }}
+              {{ saving ? '保存中' : editingAccountId ? '保存修改' : '创建上游账号' }}
             </n-button>
             <n-button secondary attr-type="button" :disabled="detecting" @click="detectPlatform">
               {{ detecting ? '检测中' : '检测平台' }}
@@ -646,11 +693,9 @@ onMounted(() => {
       :close-on-esc="!savingModels && !syncingModels"
       @after-leave="resetModelDrawer"
     >
-      <n-drawer-content :title="modelDrawerAccount ? `账号模型：${accountLabel(modelDrawerAccount)}` : '账号模型'" :closable="!savingModels && !syncingModels">
+      <n-drawer-content :title="modelDrawerAccount ? `上游账号模型：${accountLabel(modelDrawerAccount)}` : '上游账号模型'" :closable="!savingModels && !syncingModels">
         <div class="model-drawer-stack">
-          <p class="muted">维护该账号固定可用模型。保存后会重建路由。</p>
-          <n-alert v-if="modelDrawerMessage" type="success" :bordered="false">{{ modelDrawerMessage }}</n-alert>
-          <n-alert v-if="modelDrawerError" type="error" :bordered="false">{{ modelDrawerError }}</n-alert>
+          <p class="muted">维护该上游账号固定可用模型。保存后会重建模型。</p>
 
           <n-spin :show="loadingModels">
             <section class="model-drawer-section">
@@ -659,7 +704,7 @@ onMounted(() => {
                   <h2>模型白名单</h2>
                   <p class="muted">{{ accountModels.length }} 个模型</p>
                 </div>
-                <n-button secondary type="error" attr-type="button" :disabled="accountModels.length === 0" @click="clearModelDraft">清空所有模型</n-button>
+                <n-button secondary type="error" attr-type="button" :disabled="loadingModels || accountModels.length === 0" @click="clearModelDraft">清空所有模型</n-button>
               </div>
 
               <div v-if="accountModels.length > 0" class="model-chip-grid">
@@ -668,15 +713,15 @@ onMounted(() => {
                   <button class="model-chip-remove" type="button" @click="removeModel(model)">×</button>
                 </div>
               </div>
-              <div v-else class="model-empty">暂无固定模型，保存空列表后该账号不会生成自动通道。</div>
+              <div v-else class="model-empty">暂无固定模型，保存空列表后该上游账号不会生成自动通道。</div>
             </section>
 
             <section class="model-drawer-section">
               <label class="field">
                 <span>添加自定义模型</span>
                 <div class="model-input-row">
-                  <n-input v-model:value="customModelName" placeholder="gpt-5.5" @keydown.enter.prevent="addModel(customModelName)" />
-                  <n-button type="primary" attr-type="button" @click="addModel(customModelName)">添加</n-button>
+                  <n-input v-model:value="customModelName" placeholder="gpt-5.5" :disabled="loadingModels" @keydown.enter.prevent="addModel(customModelName)" />
+                  <n-button type="primary" attr-type="button" :disabled="loadingModels" @click="addModel(customModelName)">添加</n-button>
                 </div>
               </label>
             </section>
@@ -695,6 +740,7 @@ onMounted(() => {
                   secondary
                   size="small"
                   attr-type="button"
+                  :disabled="loadingModels"
                   @click="addModel(model)"
                 >
                   + {{ model }}
@@ -705,26 +751,56 @@ onMounted(() => {
           </n-spin>
 
           <div class="model-drawer-footer">
-            <n-button secondary attr-type="button" :disabled="syncingModels || savingModels" @click="syncAccountModels">
+            <n-button secondary attr-type="button" :disabled="loadingModels || syncingModels || savingModels" @click="syncAccountModels">
               {{ syncingModels ? '同步中' : '同步上游支持的模型' }}
             </n-button>
-            <n-button type="primary" attr-type="button" :disabled="savingModels || syncingModels" @click="saveAccountModels">
+            <n-button type="primary" attr-type="button" :disabled="loadingModels || savingModels || syncingModels" @click="saveAccountModels">
               {{ savingModels ? '保存中' : '保存模型' }}
             </n-button>
-            <n-button secondary attr-type="button" :disabled="savingModels || syncingModels" @click="closeModelDrawer">取消</n-button>
+            <n-button secondary attr-type="button" :disabled="loadingModels || savingModels || syncingModels" @click="closeModelDrawer">取消</n-button>
           </div>
         </div>
       </n-drawer-content>
     </n-drawer>
 
-    <n-alert v-if="message && !showAccountDrawer" type="success" :bordered="false">{{ message }}</n-alert>
-    <n-alert v-if="error && !showAccountDrawer" type="error" :bordered="false">{{ error }}</n-alert>
+    <n-modal
+      v-model:show="syncModelModalVisible"
+      preset="card"
+      title="选择上游模型"
+      style="width: min(760px, calc(100vw - 32px))"
+    >
+      <div class="sync-model-panel">
+        <div class="panel-header">
+          <n-checkbox
+            :checked="allSyncModelsSelected"
+            :indeterminate="selectedSyncModels.length > 0 && !allSyncModelsSelected"
+            @update:checked="toggleAllSyncModels"
+          >
+            全选
+          </n-checkbox>
+        </div>
+        <div v-if="syncModelOptions.length > 0" class="sync-model-list">
+          <label v-for="model in syncModelOptions" :key="model" class="check-row option-item">
+            <n-checkbox :checked="isSyncModelSelected(model)" @update:checked="(checked) => toggleSyncModel(model, checked)">
+              <span class="mono">{{ model }}</span>
+            </n-checkbox>
+          </label>
+        </div>
+        <div v-else class="model-empty">未获取到上游模型。</div>
+      </div>
+      <template #footer>
+        <div class="form-actions">
+          <n-button secondary attr-type="button" @click="syncModelModalVisible = false">取消</n-button>
+          <n-button type="primary" attr-type="button" @click="confirmSyncModels">确定</n-button>
+        </div>
+      </template>
+    </n-modal>
 
     <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
-        <h2>账号列表</h2>
+        <h2>上游账号列表</h2>
         <div class="actions">
-          <n-button type="primary" attr-type="button" @click="openCreateAccount">新增账号</n-button>
+          <n-button type="primary" attr-type="button" @click="openCreateAccount">新增上游账号</n-button>
           <n-button secondary attr-type="button" :disabled="refreshingAllBalances" @click="refreshAllBalances">
             {{ refreshingAllBalances ? '刷新中' : '刷新全部余额' }}
           </n-button>
@@ -745,8 +821,7 @@ onMounted(() => {
               <th>
                 <n-checkbox :checked="allVisibleAccountsSelected()" :disabled="accounts.length === 0" @update:checked="toggleAllVisibleAccounts" />
               </th>
-              <th>账号</th>
-              <th>Base URL</th>
+              <th>上游账号</th>
               <th>平台</th>
               <th>模式</th>
               <th>状态</th>
@@ -766,7 +841,6 @@ onMounted(() => {
                 <n-checkbox :checked="isAccountSelected(account.id)" @update:checked="toggleAccountSelection(account.id)" />
               </td>
               <td>{{ accountLabel(account) }}</td>
-              <td class="mono">{{ account.baseUrl || '-' }}</td>
               <td>{{ account.platform || '-' }}</td>
               <td>{{ account.credentialMode }}</td>
               <td>
@@ -783,7 +857,7 @@ onMounted(() => {
               <td>{{ account.isPinned ? '是' : '否' }}</td>
               <td>{{ formatTime(account.lastBalanceRefresh) }}</td>
               <td class="mono">{{ account.proxyUrl || '-' }}</td>
-              <td class="mono">{{ account.apiKeyMasked || account.apiTokenMasked || '-' }}</td>
+              <td class="mono">{{ account.apiKeyMasked || '-' }}</td>
               <td class="actions">
                 <n-button text attr-type="button" :disabled="refreshingBalanceId === account.id" @click="refreshBalance(account)">
                   {{ refreshingBalanceId === account.id ? '刷新中' : '刷新余额' }}
@@ -794,7 +868,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="!loading && accounts.length === 0">
-              <td class="empty" colspan="14">暂无账号</td>
+              <td class="empty" colspan="13">暂无上游账号</td>
             </tr>
           </tbody>
         </n-table>
@@ -902,9 +976,25 @@ onMounted(() => {
   padding-top: 14px;
 }
 
+.sync-model-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sync-model-list {
+  display: grid;
+  max-height: min(520px, 60vh);
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: auto;
+  padding-right: 4px;
+}
+
 @media (max-width: 700px) {
   .model-chip-grid,
-  .model-input-row {
+  .model-input-row,
+  .sync-model-list {
     grid-template-columns: 1fr;
   }
 

@@ -130,7 +130,7 @@ async function cloneImageFormData(formData: MultipartFormData, upstreamModel: st
       next.append(key, value);
     }
   }
-  // 路由命中的真实上游模型必须覆盖客户端传入模型。
+  // 命中的真实上游模型必须覆盖客户端传入模型。
   next.set('model', upstreamModel);
   return next;
 }
