@@ -137,7 +137,6 @@ onMounted(() => {
               <n-layout class="app-main">
                 <n-layout-header bordered class="content-header">
                   <div>
-                    <p class="eyebrow">管理后台</p>
                     <h1>{{ currentTitle }}</h1>
                   </div>
                   <div v-if="backendConnected" class="service-status">
