@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
@@ -138,7 +138,11 @@ export async function listProxyDebugTraces(query: {
   const filters: SQL[] = [];
   if (query.requestId) filters.push(eq(schema.proxyDebugTraces.id, query.requestId));
   if (query.requestedModel) filters.push(eq(schema.proxyDebugTraces.requestedModel, query.requestedModel));
-  if (query.finalStatus) filters.push(eq(schema.proxyDebugTraces.finalStatus, query.finalStatus));
+  if (query.finalStatus === 'pending') {
+    filters.push(isNull(schema.proxyDebugTraces.finalStatus));
+  } else if (query.finalStatus) {
+    filters.push(eq(schema.proxyDebugTraces.finalStatus, query.finalStatus));
+  }
   const where = filters.length > 0 ? and(...filters) : undefined;
   const items = await db
     .select({

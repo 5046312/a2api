@@ -6,7 +6,7 @@ import { config } from '../../config.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
 import { recordManagedKeyCostUsage } from '../../services/downstreamKeyService.js';
 import { createProxyDebugTrace, finalizeProxyDebugTrace, recordProxyDebugAttempt } from '../../services/proxyDebugTraceService.js';
-import { createProxyLog } from '../../services/proxyLogService.js';
+import { createPendingProxyLog, finalizeProxyLog } from '../../services/proxyLogService.js';
 import {
   recordSiteApiEndpointFailure,
   recordSiteApiEndpointSuccess,
@@ -58,6 +58,13 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
       downstreamApiKeyId: auth.keyId,
       requestHeaders: request.headers
     });
+    const logId = await createPendingProxyLog({
+      debugTraceId: traceId,
+      downstreamApiKeyId: auth.keyId,
+      modelRequested: parsed.requestedModel,
+      isStream: false
+    });
+    let nextAttemptIndex = 1;
     const excludedChannelIds: number[] = [];
     const maxAttempts = Math.max(1, config.proxyMaxChannelAttempts);
     let retryCount = 0;
@@ -74,7 +81,8 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
         downstreamApiKeyId: auth.keyId,
         retryCount,
         traceId,
-        attemptIndex: attempt + 1,
+        logId,
+        takeAttemptIndex: () => nextAttemptIndex++,
         startedAt,
         reply
       });
@@ -90,7 +98,8 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
       finalHttpStatus: 503,
       decisionSummary: { error: lastError, excludedChannelIds, retryCount }
     });
-    await createProxyLog({
+    await finalizeProxyLog({
+      id: logId,
       debugTraceId: traceId,
       downstreamApiKeyId: auth.keyId,
       modelRequested: parsed.requestedModel,
@@ -147,7 +156,8 @@ async function createVideoTaskWithChannel(input: {
   downstreamApiKeyId: number | null;
   retryCount: number;
   traceId: number;
-  attemptIndex: number;
+  logId: number;
+  takeAttemptIndex: () => number;
   startedAt: number;
   reply: FastifyReply;
 }): Promise<{ done: true; response: unknown } | { done: false; error: string }> {
@@ -164,6 +174,7 @@ async function createVideoTaskWithChannel(input: {
     const targetUrl = resolveOpenAiPath(target.baseUrl, '/v1/videos');
     const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
     let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+    const attemptIndex = input.takeAttemptIndex();
 
     try {
       const upstreamRequest = await buildVideoCreateUpstreamRequest(input.createInput, input.selected.sourceModel);
@@ -184,7 +195,21 @@ async function createVideoTaskWithChannel(input: {
         fetchOptions.signal = controller.signal;
         firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
       }
-
+      await recordProxyDebugAttempt({
+        traceId: input.traceId,
+        attemptIndex,
+        channelId: input.selected.channelId,
+        routeId: input.selected.routeId,
+        accountId: input.selected.accountId,
+        siteId: input.selected.siteId,
+        sitePlatform: input.selected.sitePlatform,
+        modelActual: input.selected.sourceModel,
+        endpointId: target.endpointId,
+        endpoint: formatEndpointName(input.selected, target),
+        requestPath: '/v1/videos',
+        targetUrl,
+        requestHeaders: headers
+      });
       const response = await fetch(targetUrl, fetchOptions);
       if (firstByteTimer) clearTimeout(firstByteTimer);
       const responseHeaders = headersToRecord(response.headers);
@@ -196,7 +221,7 @@ async function createVideoTaskWithChannel(input: {
         const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
         await recordProxyDebugAttempt({
           traceId: input.traceId,
-          attemptIndex: input.attemptIndex,
+          attemptIndex,
           endpoint: formatEndpointName(input.selected, target),
           requestPath: '/v1/videos',
           targetUrl,
@@ -224,7 +249,7 @@ async function createVideoTaskWithChannel(input: {
         const error = `Upstream returned non-JSON response: ${text.slice(0, 160)}`;
         await recordProxyDebugAttempt({
           traceId: input.traceId,
-          attemptIndex: input.attemptIndex,
+          attemptIndex,
           endpoint: formatEndpointName(input.selected, target),
           requestPath: '/v1/videos',
           targetUrl,
@@ -243,7 +268,7 @@ async function createVideoTaskWithChannel(input: {
         const error = 'Upstream video response did not include id';
         await recordProxyDebugAttempt({
           traceId: input.traceId,
-          attemptIndex: input.attemptIndex,
+          attemptIndex,
           endpoint: formatEndpointName(input.selected, target),
           requestPath: '/v1/videos',
           targetUrl,
@@ -272,7 +297,7 @@ async function createVideoTaskWithChannel(input: {
 
       await recordProxyDebugAttempt({
         traceId: input.traceId,
-        attemptIndex: input.attemptIndex,
+        attemptIndex,
         endpoint: formatEndpointName(input.selected, target),
         requestPath: '/v1/videos',
         targetUrl,
@@ -295,7 +320,8 @@ async function createVideoTaskWithChannel(input: {
         finalUpstreamPath: targetUrl,
         finalResponseHeaders: responseHeaders
       });
-      await createProxyLog({
+      await finalizeProxyLog({
+        id: input.logId,
         debugTraceId: input.traceId,
         routeId: input.selected.routeId,
         channelId: input.selected.channelId,
@@ -324,7 +350,7 @@ async function createVideoTaskWithChannel(input: {
       const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
       await recordProxyDebugAttempt({
         traceId: input.traceId,
-        attemptIndex: input.attemptIndex,
+        attemptIndex,
         endpoint: formatEndpointName(input.selected, target),
         requestPath: '/v1/videos',
         targetUrl,
@@ -359,10 +385,17 @@ async function handleMappedVideoTaskRequest(request: VideoTaskRequest, reply: Fa
     downstreamApiKeyId: auth.keyId,
     requestHeaders: request.headers
   });
+  const logId = await createPendingProxyLog({
+    debugTraceId: traceId,
+    downstreamApiKeyId: auth.keyId,
+    modelRequested: requestedModel,
+    isStream: false
+  });
+  let nextAttemptIndex = 1;
   const credential = await resolveProxyVideoTaskCredential(mapping);
   if (!credential) {
     const error = 'Video task credential is unavailable';
-    await finalizeMappedVideoTaskFailure(traceId, mapping, auth.keyId, method, 502, startedAt, error);
+    await finalizeMappedVideoTaskFailure(traceId, logId, mapping, auth.keyId, method, 502, startedAt, error);
     return sendError(reply, 502, 'upstream_error', error, 'upstream_error');
   }
 
@@ -371,29 +404,30 @@ async function handleMappedVideoTaskRequest(request: VideoTaskRequest, reply: Fa
     credential,
     method,
     requestHeaders: request.headers,
-    traceId
+    traceId,
+    takeAttemptIndex: () => nextAttemptIndex++
   });
   if (!upstreamResult.ok) {
-    await finalizeMappedVideoTaskFailure(traceId, mapping, auth.keyId, method, upstreamResult.status, startedAt, upstreamResult.message);
+    await finalizeMappedVideoTaskFailure(traceId, logId, mapping, auth.keyId, method, upstreamResult.status, startedAt, upstreamResult.message);
     return sendError(reply, upstreamResult.status, 'upstream_error', upstreamResult.message, 'upstream_error');
   }
 
   const response = upstreamResult.response;
   const text = method === 'DELETE' && response.status === 204 ? '' : await response.text();
   if (!response.ok) {
-    await finalizeMappedVideoTaskFailure(traceId, mapping, auth.keyId, method, response.status, startedAt, text || response.statusText, upstreamResult.targetUrl, response.headers);
+    await finalizeMappedVideoTaskFailure(traceId, logId, mapping, auth.keyId, method, response.status, startedAt, text || response.statusText, upstreamResult.targetUrl, response.headers);
     return relayUpstreamText(reply, response, text);
   }
 
   if (method === 'DELETE') {
     await deleteProxyVideoTaskByPublicId(mapping.publicId);
-    await finalizeMappedVideoTaskSuccess(traceId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
+    await finalizeMappedVideoTaskSuccess(traceId, logId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
     return reply.code(response.status).send();
   }
 
   const payload = parseJsonPayload(text);
   if (!payload) {
-    await finalizeMappedVideoTaskSuccess(traceId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
+    await finalizeMappedVideoTaskSuccess(traceId, logId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
     return reply.code(response.status).type(response.headers.get('content-type') || 'text/plain').send(text);
   }
 
@@ -402,7 +436,7 @@ async function handleMappedVideoTaskRequest(request: VideoTaskRequest, reply: Fa
     upstreamResponseMeta: { contentType: response.headers.get('content-type') || 'application/json' },
     lastUpstreamStatus: response.status
   });
-  await finalizeMappedVideoTaskSuccess(traceId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
+  await finalizeMappedVideoTaskSuccess(traceId, logId, mapping, auth.keyId, method, response.status, startedAt, upstreamResult.targetUrl, response.headers);
   return reply.code(response.status).send(rewriteVideoResponsePublicId(payload, mapping.publicId));
 }
 
@@ -412,6 +446,7 @@ async function requestMappedVideoTaskUpstream(input: {
   method: 'GET' | 'DELETE';
   requestHeaders: Record<string, string | string[] | undefined>;
   traceId: number;
+  takeAttemptIndex: () => number;
 }): Promise<
   | { ok: true; response: Response; targetUrl: string }
   | { ok: false; status: number; message: string }
@@ -430,6 +465,7 @@ async function requestMappedVideoTaskUpstream(input: {
       token: input.credential.token,
       contentType: null
     });
+    const attemptIndex = input.takeAttemptIndex();
 
     try {
       const dispatcher = fetchDispatcher(input.credential.proxyUrl);
@@ -438,6 +474,15 @@ async function requestMappedVideoTaskUpstream(input: {
         headers
       };
       if (dispatcher) fetchOptions.dispatcher = dispatcher;
+      await recordProxyDebugAttempt({
+        traceId: input.traceId,
+        attemptIndex,
+        endpointId: target.endpointId,
+        endpoint: formatMappedEndpointName(input.credential, target),
+        requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
+        targetUrl,
+        requestHeaders: headers
+      });
       const response = await fetch(targetUrl, fetchOptions);
       const responseHeaders = headersToRecord(response.headers);
 
@@ -447,7 +492,7 @@ async function requestMappedVideoTaskUpstream(input: {
         const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: lastEndpointError });
         await recordProxyDebugAttempt({
           traceId: input.traceId,
-          attemptIndex: 1,
+          attemptIndex,
           endpoint: formatMappedEndpointName(input.credential, target),
           requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
           targetUrl,
@@ -466,7 +511,7 @@ async function requestMappedVideoTaskUpstream(input: {
       await recordSiteApiEndpointSuccess(target.endpointId);
       await recordProxyDebugAttempt({
         traceId: input.traceId,
-        attemptIndex: 1,
+        attemptIndex,
         endpoint: formatMappedEndpointName(input.credential, target),
         requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
         targetUrl,
@@ -481,7 +526,7 @@ async function requestMappedVideoTaskUpstream(input: {
       const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
       await recordProxyDebugAttempt({
         traceId: input.traceId,
-        attemptIndex: 1,
+        attemptIndex,
         endpoint: formatMappedEndpointName(input.credential, target),
         requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
         targetUrl,
@@ -530,6 +575,7 @@ async function writeVideoCreateFailure(
     downstreamApiKeyId: number | null;
     retryCount: number;
     traceId: number;
+    logId: number;
     startedAt: number;
   },
   httpStatus: number,
@@ -548,7 +594,8 @@ async function writeVideoCreateFailure(
     finalUpstreamPath: targetUrl,
     finalResponseHeaders: responseHeaders
   });
-  await createProxyLog({
+  await finalizeProxyLog({
+    id: input.logId,
     debugTraceId: input.traceId,
     routeId: input.selected.routeId,
     channelId: input.selected.channelId,
@@ -567,6 +614,7 @@ async function writeVideoCreateFailure(
 
 async function finalizeMappedVideoTaskSuccess(
   traceId: number,
+  logId: number,
   mapping: ProxyVideoTaskRecord,
   downstreamApiKeyId: number | null,
   method: 'GET' | 'DELETE',
@@ -585,7 +633,8 @@ async function finalizeMappedVideoTaskSuccess(
     finalUpstreamPath: targetUrl,
     finalResponseHeaders: headersToRecord(responseHeaders)
   });
-  await createProxyLog({
+  await finalizeProxyLog({
+    id: logId,
     debugTraceId: traceId,
     channelId: mapping.channelId,
     accountId: mapping.accountId,
@@ -601,6 +650,7 @@ async function finalizeMappedVideoTaskSuccess(
 
 async function finalizeMappedVideoTaskFailure(
   traceId: number,
+  logId: number,
   mapping: ProxyVideoTaskRecord,
   downstreamApiKeyId: number | null,
   method: 'GET' | 'DELETE',
@@ -620,7 +670,8 @@ async function finalizeMappedVideoTaskFailure(
     finalUpstreamPath: targetUrl ?? null,
     finalResponseHeaders: responseHeaders ? headersToRecord(responseHeaders) : null
   });
-  await createProxyLog({
+  await finalizeProxyLog({
+    id: logId,
     debugTraceId: traceId,
     channelId: mapping.channelId,
     accountId: mapping.accountId,

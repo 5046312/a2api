@@ -10,7 +10,7 @@ import {
   recordProxyDebugAttempt,
   type RecordProxyDebugAttemptInput
 } from '../../services/proxyDebugTraceService.js';
-import { createProxyLog } from '../../services/proxyLogService.js';
+import { createPendingProxyLog, finalizeProxyLog } from '../../services/proxyLogService.js';
 import {
   recordSiteApiEndpointFailure,
   recordSiteApiEndpointSuccess,
@@ -109,11 +109,18 @@ export async function proxyOpenAiEndpoint(
   const excludedChannelIds: number[] = [];
   const maxAttempts = Math.max(1, config.proxyMaxChannelAttempts);
   const startedAt = Date.now();
+  let nextAttemptIndex = 1;
   const traceId = await createProxyDebugTrace({
     downstreamPath: options.downstreamPath,
     requestedModel: body.model,
     downstreamApiKeyId,
     requestHeaders
+  });
+  const logId = await createPendingProxyLog({
+    debugTraceId: traceId,
+    downstreamApiKeyId,
+    modelRequested: body.model,
+    isStream: body.stream ?? false
   });
   let retryCount = 0;
   let lastError = 'No available channel';
@@ -135,7 +142,8 @@ export async function proxyOpenAiEndpoint(
       downstreamApiKeyId,
       retryCount,
       traceId,
-      attemptIndex: attempt + 1,
+      logId,
+      takeAttemptIndex: () => nextAttemptIndex++,
       startedAt,
       reply,
       options,
@@ -160,7 +168,8 @@ export async function proxyOpenAiEndpoint(
     finalHttpStatus: 503,
     decisionSummary: { error: finalError, excludedChannelIds, retryCount }
   });
-  await createProxyLog({
+  await finalizeProxyLog({
+    id: logId,
     debugTraceId: traceId,
     downstreamApiKeyId,
     modelRequested: body.model,
@@ -181,7 +190,8 @@ async function callUpstreamChat(input: {
   downstreamApiKeyId: number | null;
   retryCount: number;
   traceId: number;
-  attemptIndex: number;
+  logId: number;
+  takeAttemptIndex: () => number;
   startedAt: number;
   reply: FastifyReply;
   options: OpenAiProxyEndpointOptions;
@@ -220,6 +230,12 @@ async function callUpstreamChat(input: {
     const url = resolveOpenAiPath(target.baseUrl, input.options.upstreamPath);
     const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
     let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+    const attemptRecord = buildAttemptRecordInput(
+      { ...input, attemptIndex: input.takeAttemptIndex() },
+      target,
+      url,
+      headers
+    );
 
     try {
       const dispatcher = fetchDispatcher(input.selected.proxyUrl);
@@ -233,7 +249,7 @@ async function callUpstreamChat(input: {
         fetchOptions.signal = controller.signal;
         firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
       }
-      const attemptRecord = buildAttemptRecordInput(input, target, url, headers);
+      await recordProxyDebugAttempt(attemptRecord);
       const response = await fetch(url, fetchOptions);
       if (firstByteTimer) clearTimeout(firstByteTimer);
 
@@ -268,7 +284,8 @@ async function callUpstreamChat(input: {
           finalUpstreamPath: url,
           finalResponseHeaders: headersToRecord(response.headers)
         });
-        await createProxyLog({
+        await finalizeProxyLog({
+          id: input.logId,
           debugTraceId: input.traceId,
           routeId: input.selected.routeId,
           channelId: input.selected.channelId,
@@ -290,11 +307,6 @@ async function callUpstreamChat(input: {
       }
 
       if (input.body.stream) {
-        await recordProxyDebugAttempt({
-          ...attemptRecord,
-          responseStatus: response.status,
-          responseHeaders: headersToRecord(response.headers)
-        });
         await streamUpstreamResponse(input.reply, response, {
           ...input,
           endpointTarget: target,
@@ -330,7 +342,8 @@ async function callUpstreamChat(input: {
         finalUpstreamPath: url,
         finalResponseHeaders: headersToRecord(response.headers)
       });
-      await createProxyLog({
+      await finalizeProxyLog({
+        id: input.logId,
         debugTraceId: input.traceId,
         routeId: input.selected.routeId,
         channelId: input.selected.channelId,
@@ -363,7 +376,7 @@ async function callUpstreamChat(input: {
       lastEndpointError = message;
       const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
       await recordProxyDebugAttempt({
-        ...buildAttemptRecordInput(input, target, url, headers),
+        ...attemptRecord,
         rawErrorText: message
       });
       if (endpointFailure.retryable && target.endpointId !== null) {
@@ -384,6 +397,7 @@ async function streamUpstreamResponse(
     downstreamApiKeyId: number | null;
     retryCount: number;
     traceId: number;
+    logId: number;
     startedAt: number;
     endpointTarget: SiteApiEndpointTarget;
     targetUrl: string;
@@ -416,6 +430,11 @@ async function streamUpstreamResponse(
     reply.raw.end();
     const streamUsage = streamUsageCollector.finish();
     const estimatedCost = estimateUsageCost(streamUsage.totalTokens, input.selected.accountUnitCost);
+    await recordProxyDebugAttempt({
+      ...input.attemptRecord,
+      responseStatus: response.status,
+      responseHeaders: headersToRecord(response.headers)
+    });
     await recordSiteApiEndpointSuccess(input.endpointTarget.endpointId);
     await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
     if (input.downstreamApiKeyId !== null) {
@@ -433,7 +452,8 @@ async function streamUpstreamResponse(
       finalUpstreamPath: input.targetUrl,
       finalResponseHeaders: headersToRecord(response.headers)
     });
-    await createProxyLog({
+    await finalizeProxyLog({
+      id: input.logId,
       debugTraceId: input.traceId,
       routeId: input.selected.routeId,
       channelId: input.selected.channelId,
@@ -476,7 +496,8 @@ async function streamUpstreamResponse(
       finalUpstreamPath: input.targetUrl,
       finalResponseHeaders: headersToRecord(response.headers)
     });
-    await createProxyLog({
+    await finalizeProxyLog({
+      id: input.logId,
       debugTraceId: input.traceId,
       routeId: input.selected.routeId,
       channelId: input.selected.channelId,

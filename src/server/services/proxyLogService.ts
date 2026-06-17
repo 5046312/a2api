@@ -4,13 +4,14 @@ import { stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 
 export type ProxyLogInput = {
+  id?: number;
   routeId?: number | null;
   channelId?: number | null;
   accountId?: number | null;
   downstreamApiKeyId?: number | null;
   modelRequested?: string | null;
   modelActual?: string | null;
-  status: 'success' | 'failed' | 'retried';
+  status: 'pending' | 'success' | 'failed' | 'retried';
   httpStatus?: number | null;
   isStream?: boolean;
   firstByteLatencyMs?: number | null;
@@ -24,6 +25,11 @@ export type ProxyLogInput = {
   errorMessage?: string | null;
   retryCount?: number;
 };
+
+export type PendingProxyLogInput = Pick<
+  ProxyLogInput,
+  'downstreamApiKeyId' | 'modelRequested' | 'isStream' | 'debugTraceId'
+>;
 
 function parseBillingDetails(value: string | null): unknown {
   if (!value) return null;
@@ -57,6 +63,47 @@ export async function createProxyLog(input: ProxyLogInput): Promise<void> {
     retryCount: input.retryCount ?? 0,
     createdAt: nowIso()
   }).run();
+}
+
+export async function createPendingProxyLog(input: PendingProxyLogInput): Promise<number> {
+  const inserted = await db.insert(schema.proxyLogs).values({
+    downstreamApiKeyId: input.downstreamApiKeyId ?? null,
+    modelRequested: input.modelRequested ?? null,
+    status: 'pending',
+    isStream: input.isStream ?? false,
+    debugTraceId: input.debugTraceId ?? null,
+    createdAt: nowIso()
+  }).returning({ id: schema.proxyLogs.id }).get();
+  return inserted.id;
+}
+
+export async function finalizeProxyLog(input: ProxyLogInput): Promise<void> {
+  if (!input.id) throw new Error('Proxy log id is required');
+  await db
+    .update(schema.proxyLogs)
+    .set({
+      routeId: input.routeId ?? null,
+      channelId: input.channelId ?? null,
+      accountId: input.accountId ?? null,
+      downstreamApiKeyId: input.downstreamApiKeyId ?? null,
+      modelRequested: input.modelRequested ?? null,
+      modelActual: input.modelActual ?? null,
+      status: input.status,
+      httpStatus: input.httpStatus ?? null,
+      isStream: input.isStream ?? false,
+      firstByteLatencyMs: input.firstByteLatencyMs ?? null,
+      latencyMs: input.latencyMs ?? null,
+      promptTokens: input.promptTokens ?? 0,
+      completionTokens: input.completionTokens ?? 0,
+      totalTokens: input.totalTokens ?? 0,
+      estimatedCost: input.estimatedCost ?? 0,
+      billingDetails: input.billingDetails ? stringifyJson(input.billingDetails) : null,
+      debugTraceId: input.debugTraceId ?? null,
+      errorMessage: input.errorMessage ?? null,
+      retryCount: input.retryCount ?? 0
+    })
+    .where(eq(schema.proxyLogs.id, input.id))
+    .run();
 }
 
 export async function listProxyLogs(query: {

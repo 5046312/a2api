@@ -33,6 +33,7 @@ const filters = reactive({
 });
 const logStatusOptions = [
   { label: '全部状态', value: '' },
+  { label: '请求中', value: 'pending' },
   { label: '成功', value: 'success' },
   { label: '失败', value: 'failed' },
   { label: '重试', value: 'retried' }
@@ -90,6 +91,7 @@ function formatId(value: number | null | undefined) {
 
 function finalResultText() {
   if (!selectedLog.value) return '-';
+  if (selectedLog.value.status === 'pending') return '请求进行中';
   if (selectedLog.value.status === 'success') return '请求最终成功';
   return selectedLog.value.errorMessage || '请求最终失败';
 }
@@ -110,15 +112,24 @@ function formatTime(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : logTimeFormatter.format(date);
 }
 
-function formatLogStatus(status: string | null | undefined) {
+function formatLogStatus(status: string | null | undefined, retryCount = 0) {
   if (!status) return '-';
-  if (status === 'success') return '成功';
+  if (status === 'pending') return '请求中';
+  if (status === 'success') {
+    return retryCount > 0 ? `成功（重试 ${retryCount} 次）` : '成功';
+  }
   if (status === 'failed') return '失败';
   if (status === 'retried') return '重试';
   return status;
 }
 
+// Trace 结束前 finalStatus 为空，这里统一按请求中展示。
+function formatTraceStatus(status: string | null | undefined) {
+  return status ? formatLogStatus(status) : '请求中';
+}
+
 function logStatusTagType(status: string) {
+  if (status === 'pending') return 'info';
   if (status === 'success') return 'success';
   if (status === 'retried') return 'warning';
   if (status === 'failed') return 'error';
@@ -304,7 +315,7 @@ onMounted(loadPage);
                 <tr v-for="log in logs" :key="log.id">
                   <td class="mono">{{ formatTime(log.createdAt) }}</td>
                   <td class="mono">{{ formatId(log.requestId || log.debugTraceId) }}</td>
-                  <td><n-tag size="small" :type="logStatusTagType(log.status)">{{ formatLogStatus(log.status) }}</n-tag></td>
+                  <td><n-tag size="small" :type="logStatusTagType(log.status)">{{ formatLogStatus(log.status, log.retryCount) }}</n-tag></td>
                   <td>{{ log.httpStatus || '-' }}</td>
                   <td class="mono">{{ log.downstreamPath || '-' }}</td>
                   <td class="mono">{{ log.modelRequested || '-' }}</td>
@@ -367,7 +378,7 @@ onMounted(loadPage);
                   <td class="mono">{{ formatId(trace.requestId) }}</td>
                   <td class="mono">{{ trace.downstreamPath }}</td>
                   <td class="mono">{{ trace.requestedModel || '-' }}</td>
-                  <td>{{ formatLogStatus(trace.finalStatus) }}</td>
+                  <td>{{ formatTraceStatus(trace.finalStatus) }}</td>
                   <td>{{ trace.finalHttpStatus || '-' }}</td>
                   <td>{{ trace.selectedRouteId || '-' }}</td>
                   <td>{{ trace.attemptCount }}</td>
@@ -458,7 +469,7 @@ onMounted(loadPage);
                 <tbody>
                   <tr>
                     <th>状态 / HTTP</th>
-                    <td>{{ formatLogStatus(selectedLog.status) }} / {{ selectedLog.httpStatus || '-' }}</td>
+                    <td>{{ formatLogStatus(selectedLog.status, selectedLog.retryCount) }} / {{ selectedLog.httpStatus || '-' }}</td>
                     <th>结果说明</th>
                     <td class="error-cell">{{ finalResultText() }}</td>
                   </tr>
@@ -487,7 +498,7 @@ onMounted(loadPage);
             <div class="panel-header">
               <div>
                 <h2>{{ selectedLog ? '尝试列表' : `Debug Trace #${selectedTrace.id}` }}</h2>
-                <p class="muted">{{ formatLogStatus(selectedTrace.finalStatus) }} / {{ selectedTrace.finalHttpStatus || '-' }}</p>
+                <p class="muted">{{ formatTraceStatus(selectedTrace.finalStatus) }} / {{ selectedTrace.finalHttpStatus || '-' }}</p>
               </div>
             </div>
             <div class="table-wrap">

@@ -31,9 +31,10 @@ P0 implemented:
 - Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
 - Scheduled proxy log cleanup controlled by cron and retention days.
 - Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables.
+- Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
 - Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
 - Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, and channel attempt fields.
-- Proxy debug trace records for immediate model proxy attempts, exposed in request details and available from the paginated Debug Trace tab.
+- Proxy debug trace writes an attempt row before each real upstream fetch starts, then updates that same row with the response or failure result, including repeated retries against the same upstream account.
 - Runtime settings snapshot and editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
 - Maintenance APIs for clearing runtime caches and usage data.
