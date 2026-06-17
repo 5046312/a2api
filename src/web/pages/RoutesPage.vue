@@ -15,6 +15,8 @@ const savingChannelId = ref<number | null>(null);
 const error = ref('');
 const message = ref('');
 const now = ref(Date.now());
+const channelPriorityDrafts = ref<Record<number, number | null>>({});
+const channelWeightDrafts = ref<Record<number, number | null>>({});
 let cooldownTimer: ReturnType<typeof window.setInterval> | null = null;
 const notice = useMessage();
 const routeStrategy = ref<RoutingStrategy>('weighted');
@@ -23,6 +25,18 @@ const routingStrategyOptions: Array<{ label: string; value: RoutingStrategy }> =
   { label: '稳定优先', value: 'stable_first' }
 ];
 const hasCoolingChannel = computed(() => channels.value.some((channel) => isCooling(channel)));
+const strategyAlert = computed(() => {
+  if (routeStrategy.value === 'stable_first') {
+    return {
+      title: '稳定优先',
+      content: '先按优先级筛到最小值，再按综合分数固定选择最高分通道；结果稳定，不走随机。'
+    };
+  }
+  return {
+    title: '加权随机',
+    content: '先按优先级筛到最小值，再按权重、站点权重和失败惩罚计算概率随机挑选通道。'
+  };
+});
 
 watch(message, (value) => {
   if (value) notice.success(value);
@@ -73,6 +87,48 @@ function cooldownDetail(channel: RouteChannel) {
   ].join('\n');
 }
 
+function syncChannelDrafts(items: RouteChannel[]) {
+  // 输入框先走本地草稿，避免数字每次变动都立刻触发保存。
+  const priorityDrafts: Record<number, number | null> = {};
+  const weightDrafts: Record<number, number | null> = {};
+  for (const item of items) {
+    priorityDrafts[item.id] = item.priority;
+    weightDrafts[item.id] = item.weight;
+  }
+  channelPriorityDrafts.value = priorityDrafts;
+  channelWeightDrafts.value = weightDrafts;
+}
+
+function normalizePriorityValue(value: number | null | undefined) {
+  return Math.max(0, Math.trunc(Number(value) || 0));
+}
+
+function normalizeWeightValue(value: number | null | undefined) {
+  return Math.max(1, Math.trunc(Number(value) || 1));
+}
+
+function formatDecisionReason(reason: string) {
+  // 后端返回的是机器原因码，这里转成人能直接读懂的中文说明。
+  if (reason === 'excluded_channel') return '已排除该通道';
+  if (reason === 'not_forced_channel') return '不是当前指定通道';
+  if (reason === 'model_mismatch') return '模型不匹配';
+  if (reason === 'site_inactive') return '站点未启用';
+  if (reason === 'account_inactive') return '上游账号未启用';
+  if (reason === 'site_model_disabled') return '站点已禁用该模型';
+  if (reason === 'missing_account_api_key') return '缺少账号凭证';
+  if (reason === 'model_denied_by_downstream_key') return '被密钥模型范围限制';
+  if (reason === 'account_denied_by_downstream_key') return '被密钥授权范围限制';
+  if (reason === 'cooldown') return '通道冷却中';
+  if (reason.startsWith('weight=')) return `权重：${reason.slice('weight='.length)}`;
+  if (reason.startsWith('siteWeight=')) return `站点权重：${reason.slice('siteWeight='.length)}`;
+  if (reason.startsWith('failPenalty=')) return `失败惩罚：${reason.slice('failPenalty='.length)}`;
+  return reason;
+}
+
+function formatDecisionReasons(reasons: string[]) {
+  return reasons.map(formatDecisionReason).join('，');
+}
+
 function syncCooldownTimer() {
   if (hasCoolingChannel.value && !cooldownTimer) {
     cooldownTimer = window.setInterval(() => {
@@ -97,6 +153,7 @@ async function loadRoutes() {
         channels.value = [];
         decision.value = null;
         channelDrawerVisible.value = false;
+        syncChannelDrafts([]);
       } else {
         routeStrategy.value = normalizeRoutingStrategy(selectedRoute.value.routingStrategy);
       }
@@ -142,6 +199,7 @@ async function selectRoute(route: RouteItem) {
   try {
     const data = await api.listRouteChannels(route.id);
     channels.value = data.items;
+    syncChannelDrafts(data.items);
   } catch (err) {
     setError(err, '加载通道失败');
   }
@@ -172,16 +230,13 @@ async function saveChannel(channel: RouteChannel, patch: { priority?: number | n
   try {
     const payload: { priority?: number; weight?: number; enabled?: boolean } = {};
     if (patch.priority !== undefined) {
-      payload.priority = Math.max(0, Math.trunc(Number(patch.priority) || 0));
-      channel.priority = payload.priority;
+      payload.priority = normalizePriorityValue(patch.priority);
     }
     if (patch.weight !== undefined) {
-      payload.weight = Math.max(1, Math.trunc(Number(patch.weight) || 1));
-      channel.weight = payload.weight;
+      payload.weight = normalizeWeightValue(patch.weight);
     }
     if (patch.enabled !== undefined) {
       payload.enabled = patch.enabled;
-      channel.enabled = patch.enabled;
     }
     await api.updateRouteChannel(selectedRoute.value.id, channel.id, payload);
     message.value = '通道已保存';
@@ -192,6 +247,18 @@ async function saveChannel(channel: RouteChannel, patch: { priority?: number | n
   } finally {
     savingChannelId.value = null;
   }
+}
+
+async function saveChannelDraft(channel: RouteChannel, field: 'priority' | 'weight') {
+  const draft = field === 'priority'
+    ? channelPriorityDrafts.value[channel.id]
+    : channelWeightDrafts.value[channel.id];
+  const nextValue = field === 'priority' ? normalizePriorityValue(draft) : normalizeWeightValue(draft);
+  const currentValue = field === 'priority' ? channel.priority : channel.weight;
+  if (field === 'priority') channelPriorityDrafts.value[channel.id] = nextValue;
+  else channelWeightDrafts.value[channel.id] = nextValue;
+  if (currentValue === nextValue) return;
+  await saveChannel(channel, field === 'priority' ? { priority: nextValue } : { weight: nextValue });
 }
 
 async function openChannelDrawer(route: RouteItem) {
@@ -250,7 +317,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="explain-item">
           <strong>通道</strong>
-          <span>通道是“模型 + 上游账号”的可用转发路径。一个模型可以有多个通道，系统按优先级、权重、冷却状态和下游 Key 策略选择。</span>
+          <span>通道是“模型 + 上游账号”的可用转发路径。一个模型可以有多个通道，系统按优先级、权重、冷却状态和密钥策略选择。</span>
         </div>
       </div>
       <div class="button-help">
@@ -304,23 +371,37 @@ onBeforeUnmount(() => {
     <n-drawer v-model:show="channelDrawerVisible" placement="right" width="min(900px, calc(100vw - 24px))">
       <n-drawer-content :title="selectedRoute ? `模型通道：${selectedRoute.modelPattern}` : '模型通道'">
         <div class="page-stack">
-          <div class="actions">
-            <label class="field">
+          <div class="strategy-toolbar">
+            <label class="field strategy-field">
               <span>调用策略</span>
-              <n-select v-model:value="routeStrategy" :options="routingStrategyOptions" :disabled="!selectedRoute" />
+              <n-select
+                v-model:value="routeStrategy"
+                :options="routingStrategyOptions"
+                :disabled="!selectedRoute"
+                :consistent-menu-width="false"
+              />
             </label>
-            <n-button type="primary" attr-type="button" :disabled="!selectedRoute || savingStrategy" @click="saveRouteStrategy()">
+            <n-button
+              class="strategy-save-button"
+              type="primary"
+              attr-type="button"
+              :disabled="!selectedRoute || savingStrategy"
+              @click="saveRouteStrategy()"
+            >
               {{ savingStrategy ? '保存中' : '保存策略' }}
             </n-button>
           </div>
+          <n-alert v-if="selectedRoute" type="info" :title="strategyAlert.title">
+            {{ strategyAlert.content }}
+          </n-alert>
           <div class="table-wrap">
             <n-table size="small" :bordered="false" single-line class="admin-table">
               <thead>
                 <tr>
                   <th>上游账号</th>
                   <th>来源模型</th>
-                  <th>优先级</th>
-                  <th>权重</th>
+                  <th>优先级（越小越优先）</th>
+                  <th>权重（越大概率越高）</th>
                   <th>冷却</th>
                   <th>成功/失败</th>
                   <th>状态</th>
@@ -332,20 +413,20 @@ onBeforeUnmount(() => {
                   <td class="mono">{{ channel.sourceModel }}</td>
                   <td>
                     <n-input-number
-                      :value="channel.priority"
+                      v-model:value="channelPriorityDrafts[channel.id]"
                       size="small"
                       :min="0"
                       :disabled="savingChannelId === channel.id"
-                      @update:value="(value) => saveChannel(channel, { priority: value })"
+                      @blur="saveChannelDraft(channel, 'priority')"
                     />
                   </td>
                   <td>
                     <n-input-number
-                      :value="channel.weight"
+                      v-model:value="channelWeightDrafts[channel.id]"
                       size="small"
                       :min="1"
                       :disabled="savingChannelId === channel.id"
-                      @update:value="(value) => saveChannel(channel, { weight: value })"
+                      @blur="saveChannelDraft(channel, 'weight')"
                     />
                   </td>
                   <td>
@@ -394,7 +475,6 @@ onBeforeUnmount(() => {
                 <n-table size="small" :bordered="false" single-line class="admin-table">
                   <thead>
                     <tr>
-                      <th>通道</th>
                       <th>上游账号</th>
                       <th>优先级</th>
                       <th>权重</th>
@@ -406,7 +486,6 @@ onBeforeUnmount(() => {
                   </thead>
                   <tbody>
                     <tr v-for="candidate in decision.candidates" :key="candidate.channelId" :class="{ selected: decision.selectedChannelId === candidate.channelId }">
-                      <td>{{ candidate.channelId }}</td>
                       <td>{{ candidate.accountName || candidate.accountId }}</td>
                       <td>{{ candidate.priority }}</td>
                       <td>{{ candidate.weight }}</td>
@@ -417,10 +496,10 @@ onBeforeUnmount(() => {
                           {{ candidate.available ? '可用' : '过滤' }}
                         </n-tag>
                       </td>
-                      <td>{{ candidate.reasons.join('，') }}</td>
+                      <td>{{ formatDecisionReasons(candidate.reasons) }}</td>
                     </tr>
                     <tr v-if="decision.candidates.length === 0">
-                      <td class="empty" colspan="8">暂无候选</td>
+                      <td class="empty" colspan="7">暂无候选</td>
                     </tr>
                   </tbody>
                 </n-table>
@@ -434,6 +513,22 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
+.strategy-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.strategy-field {
+  flex: 1;
+  min-width: 320px;
+}
+
+.strategy-save-button {
+  flex-shrink: 0;
+}
+
 .cooldown-cell {
   display: inline-flex;
   align-items: center;

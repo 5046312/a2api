@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
@@ -101,9 +101,16 @@ export async function finalizeProxyDebugTrace(traceId: number, input: FinalizePr
     .run();
 }
 
-export async function listProxyDebugTraces(query: { limit?: number | undefined; requestedModel?: string | undefined; finalStatus?: string | undefined }) {
-  const limit = Math.min(200, Math.max(1, query.limit || 50));
-  const filters = [];
+export async function listProxyDebugTraces(query: {
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  limit?: number | undefined;
+  requestedModel?: string | undefined;
+  finalStatus?: string | undefined;
+}) {
+  const page = Math.max(1, query.page || 1);
+  const pageSize = Math.min(200, Math.max(1, query.pageSize || query.limit || 50));
+  const filters: SQL[] = [];
   if (query.requestedModel) filters.push(eq(schema.proxyDebugTraces.requestedModel, query.requestedModel));
   if (query.finalStatus) filters.push(eq(schema.proxyDebugTraces.finalStatus, query.finalStatus));
   const where = filters.length > 0 ? and(...filters) : undefined;
@@ -126,9 +133,15 @@ export async function listProxyDebugTraces(query: { limit?: number | undefined; 
     .where(where)
     .groupBy(schema.proxyDebugTraces.id)
     .orderBy(desc(schema.proxyDebugTraces.id))
-    .limit(limit)
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
     .all();
-  return { items };
+  const totalRow = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.proxyDebugTraces)
+    .where(where)
+    .get();
+  return { items, total: Number(totalRow?.count || 0), page, pageSize };
 }
 
 export async function getProxyDebugTraceDetail(id: number) {

@@ -397,6 +397,13 @@ export type ProxyDebugTrace = {
   updatedAt: string;
 };
 
+export type ProxyDebugTraceListItem = Omit<
+  ProxyDebugTrace,
+  'attempts' | 'requestHeaders' | 'decisionSummary' | 'finalResponseHeaders'
+> & {
+  attemptCount: number;
+};
+
 export type SettingsSnapshot = {
   systemProxyUrl: string;
   proxyFirstByteTimeoutSec: number;
@@ -924,7 +931,7 @@ export const api = {
     apiRequest<ListResponse<ProxyLog>>(buildQuery('/api/proxy-logs', query)),
   getProxyLog: (id: number) => apiRequest<ProxyLog>(`/api/proxy-logs/${id}`),
   listProxyDebugTraces: (query: Record<string, QueryValue> = {}) =>
-    apiRequest<{ items: Array<Omit<ProxyDebugTrace, 'attempts' | 'requestHeaders' | 'decisionSummary' | 'finalResponseHeaders'> & { attemptCount: number }> }>(
+    apiRequest<ListResponse<ProxyDebugTraceListItem>>(
       buildQuery('/api/proxy-debug-traces', query)
     ),
   getProxyDebugTrace: (id: number) => apiRequest<ProxyDebugTrace>(`/api/proxy-debug-traces/${id}`),

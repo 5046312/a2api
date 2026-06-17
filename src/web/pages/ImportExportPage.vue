@@ -64,7 +64,7 @@ const summaryRows = computed(() => {
     { label: '上游', value: summary.importedSites },
     { label: '账号', value: summary.importedAccounts },
     { label: '模型', value: summary.importedRoutes },
-    { label: '下游 Key', value: summary.importedDownstreamKeys },
+    { label: '密钥', value: summary.importedDownstreamKeys },
     { label: '文件', value: summary.importedProxyFiles },
     { label: '视频任务', value: summary.importedProxyVideoTasks },
     { label: '偏好', value: summary.importedPreferences }

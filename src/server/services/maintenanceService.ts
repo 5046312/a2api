@@ -138,7 +138,7 @@ export function clearUsageData(): ClearUsageDataResult {
   const message = '使用统计已清理';
   recordMaintenanceEvent(
     '使用统计已清理',
-    `已清理代理日志 ${deletedProxyLogs} 条、debug trace ${deletedProxyDebugTraces} 条、debug attempt ${deletedProxyDebugAttempts} 条，并重置模型、账号和下游 Key 用量`
+    `已清理代理日志 ${deletedProxyLogs} 条、debug trace ${deletedProxyDebugTraces} 条、debug attempt ${deletedProxyDebugAttempts} 条，并重置模型、账号和密钥用量`
   );
 
   return {

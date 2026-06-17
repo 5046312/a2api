@@ -98,6 +98,7 @@ const selectedSyncModels = ref<string[]>([]);
 const modelDrawerError = ref('');
 const modelDrawerMessage = ref('');
 const selectedAccountIds = ref<number[]>([]);
+const updatingStatusAccountId = ref<number | null>(null);
 const error = ref('');
 const message = ref('');
 const dialog = useDialog();
@@ -135,12 +136,24 @@ const credentialModeOptions = [
   { label: 'OAuth', value: 'oauth' },
   { label: 'Auto', value: 'auto' }
 ];
+const expiredStatusActionOptions = [
+  { label: '恢复启用', key: 'active' },
+  { label: '改为停用', key: 'disabled' }
+];
 const modelPresetOptions = computed(() =>
   presetModelsForPlatform(modelDrawerAccount.value?.platform).filter((model) => !accountModels.value.includes(model))
 );
 const allSyncModelsSelected = computed(() =>
   syncModelOptions.value.length > 0 && syncModelOptions.value.every((model) => selectedSyncModels.value.includes(model))
 );
+
+type AccountToggleStatus = 'active' | 'disabled';
+type PendingExpiredStatusAction = {
+  account: Account;
+  nextStatus: AccountToggleStatus;
+};
+
+const pendingExpiredStatusAction = ref<PendingExpiredStatusAction | null>(null);
 
 watch(message, (value) => {
   if (value) notice.success(value);
@@ -176,6 +189,44 @@ function accountLabel(account: Account) {
 
 function modelActionLabel(account: Account) {
   return account.modelCount > 0 ? `模型(${account.modelCount})` : '模型';
+}
+
+function accountStatusLabel(status: string) {
+  if (status === 'active') return '启用';
+  if (status === 'disabled') return '停用';
+  if (status === 'expired') return '过期';
+  return status || '-';
+}
+
+function accountStatusTagType(status: string) {
+  if (status === 'active') return 'success';
+  if (status === 'expired') return 'warning';
+  return 'error';
+}
+
+function toggleStatusTarget(status: string): AccountToggleStatus | null {
+  if (status === 'active') return 'disabled';
+  if (status === 'disabled') return 'active';
+  return null;
+}
+
+function statusToggleConfirmText(status: string) {
+  if (status === 'active') return '确认停用该上游账号？';
+  if (status === 'disabled') return '确认启用该上游账号？';
+  return '';
+}
+
+function expiredStatusConfirmText() {
+  const action = pendingExpiredStatusAction.value;
+  if (!action) return '';
+  if (action.nextStatus === 'active') {
+    return `确认恢复启用上游账号 ${accountLabel(action.account)}？`;
+  }
+  return `确认将上游账号 ${accountLabel(action.account)} 改为停用？`;
+}
+
+function statusActionDisabled() {
+  return saving.value || updatingStatusAccountId.value !== null;
 }
 
 function presetModelsForPlatform(platform: string | null | undefined) {
@@ -557,6 +608,50 @@ async function refreshAllBalances() {
   }
 }
 
+async function updateAccountStatus(account: Account, nextStatus: AccountToggleStatus) {
+  if (statusActionDisabled()) return;
+  updatingStatusAccountId.value = account.id;
+  error.value = '';
+  message.value = '';
+  try {
+    await api.updateAccount(account.id, { status: nextStatus });
+    message.value = nextStatus === 'active' ? '上游账号已启用' : '上游账号已停用';
+    pendingExpiredStatusAction.value = null;
+    await loadAll();
+  } catch (err) {
+    setError(err, '更新上游账号状态失败');
+  } finally {
+    updatingStatusAccountId.value = null;
+  }
+}
+
+async function toggleAccountStatus(account: Account) {
+  const nextStatus = toggleStatusTarget(account.status);
+  if (!nextStatus) return;
+  await updateAccountStatus(account, nextStatus);
+}
+
+function selectExpiredStatusAction(account: Account, key: string | number) {
+  if (statusActionDisabled()) return;
+  if (key !== 'active' && key !== 'disabled') return;
+  // 过期状态先选动作，再进入确认弹层。
+  pendingExpiredStatusAction.value = {
+    account,
+    nextStatus: key
+  };
+}
+
+function closeExpiredStatusModal() {
+  if (updatingStatusAccountId.value !== null) return;
+  pendingExpiredStatusAction.value = null;
+}
+
+async function confirmExpiredStatusAction() {
+  const action = pendingExpiredStatusAction.value;
+  if (!action) return;
+  await updateAccountStatus(action.account, action.nextStatus);
+}
+
 function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
   dialog.warning({
     title: '确认操作',
@@ -796,6 +891,25 @@ onMounted(() => {
       </template>
     </n-modal>
 
+    <n-modal
+      preset="card"
+      :show="!!pendingExpiredStatusAction"
+      title="确认状态切换"
+      style="width: min(420px, calc(100vw - 32px))"
+      :mask-closable="updatingStatusAccountId === null"
+      @update:show="(value) => { if (!value) closeExpiredStatusModal(); }"
+    >
+      <p class="muted status-confirm-copy">{{ expiredStatusConfirmText() }}</p>
+      <template #footer>
+        <div class="form-actions">
+          <n-button secondary attr-type="button" :disabled="updatingStatusAccountId !== null" @click="closeExpiredStatusModal">取消</n-button>
+          <n-button type="primary" attr-type="button" :disabled="updatingStatusAccountId !== null" @click="confirmExpiredStatusAction">
+            {{ updatingStatusAccountId === pendingExpiredStatusAction?.account.id ? '处理中' : '确认' }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
+
     <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <h2>上游账号列表</h2>
@@ -844,11 +958,36 @@ onMounted(() => {
               <td>{{ account.platform || '-' }}</td>
               <td>{{ account.credentialMode }}</td>
               <td>
-                <n-tag
-                  size="small"
-                  :type="account.status === 'active' ? 'success' : account.status === 'expired' ? 'warning' : 'error'"
+                <n-dropdown
+                  v-if="account.status === 'expired'"
+                  trigger="click"
+                  :options="expiredStatusActionOptions"
+                  @select="(key) => selectExpiredStatusAction(account, key)"
                 >
-                  {{ account.status }}
+                  <button class="status-tag-button" type="button" :disabled="statusActionDisabled()">
+                    <n-tag size="small" :type="accountStatusTagType(account.status)">
+                      {{ accountStatusLabel(account.status) }}
+                    </n-tag>
+                  </button>
+                </n-dropdown>
+                <n-popconfirm
+                  v-else-if="toggleStatusTarget(account.status)"
+                  positive-text="确认"
+                  negative-text="取消"
+                  :disabled="statusActionDisabled()"
+                  @positive-click="() => toggleAccountStatus(account)"
+                >
+                  <template #trigger>
+                    <button class="status-tag-button" type="button" :disabled="statusActionDisabled()">
+                      <n-tag size="small" :type="accountStatusTagType(account.status)">
+                        {{ accountStatusLabel(account.status) }}
+                      </n-tag>
+                    </button>
+                  </template>
+                  {{ statusToggleConfirmText(account.status) }}
+                </n-popconfirm>
+                <n-tag v-else size="small" :type="accountStatusTagType(account.status)">
+                  {{ accountStatusLabel(account.status) }}
                 </n-tag>
               </td>
               <td class="mono">{{ formatNumber(account.balance) }} / {{ formatNumber(account.quota) }}</td>
@@ -974,6 +1113,22 @@ onMounted(() => {
   gap: 10px;
   border-top: 1px solid #e0e7ef;
   padding-top: 14px;
+}
+
+.status-confirm-copy {
+  margin-top: 0;
+}
+
+.status-tag-button {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.status-tag-button:disabled {
+  cursor: not-allowed;
 }
 
 .sync-model-panel {

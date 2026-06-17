@@ -49,6 +49,14 @@ const readOptions = [
   { label: '未读', value: 'false' },
   { label: '已读', value: 'true' }
 ];
+const logTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false
+});
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -70,6 +78,13 @@ function levelClass(level: string) {
   if (level === 'error') return 'failed';
   if (level === 'warning') return 'retried';
   return 'active';
+}
+
+// 日志时间只展示月日和时分秒，列表里不重复显示年份。
+function formatTime(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : logTimeFormatter.format(date);
 }
 
 function tagTypeByClass(className: string) {
@@ -221,7 +236,7 @@ onMounted(reloadLogs);
           </thead>
           <tbody>
             <tr v-for="item in events" :key="item.id">
-              <td class="mono">{{ item.createdAt }}</td>
+              <td class="mono">{{ formatTime(item.createdAt) }}</td>
               <td>{{ item.type }}</td>
               <td>
                 <n-tag size="small" :type="tagTypeByClass(levelClass(item.level))">{{ levelLabel(item.level) }}</n-tag>

@@ -29,9 +29,9 @@ P0 implemented:
 - Dedicated platform adapters for OneHub, DoneHub, Veloera, AnyRouter, CliProxyAPI, and Claude model discovery.
 - Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
 - Scheduled proxy log cleanup controlled by cron and retention days.
-- Proxy log filters by status, model, upstream account, downstream key, stream flag, and time range.
+- Proxy log filters by status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables.
 - Proxy log detail view with routing, cache token, billing, retry, and error fields.
-- Proxy debug trace records for Chat proxy attempts, linked from proxy log details and available from the proxy log trace list.
+- Proxy debug trace records for Chat proxy attempts, linked from proxy log details and available from the paginated Debug Trace tab.
 - Runtime settings snapshot and editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
 - Maintenance APIs for clearing runtime caches and usage data.

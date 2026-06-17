@@ -231,7 +231,7 @@ onMounted(loadData);
           <n-select v-model:value="form.model" filterable :options="modelSelectOptions" @update:value="handleModelChange" />
         </label>
         <label class="field">
-          <span>下游 Key</span>
+          <span>密钥</span>
           <n-select v-model:value="form.downstreamApiKeyId" :options="downstreamKeyOptions" @update:value="explainSelectedRoute" />
         </label>
         <label class="field">

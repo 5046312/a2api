@@ -32,6 +32,8 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/proxy-debug-traces', async (request) => {
     const query = z.object({
+      page: z.coerce.number().int().optional(),
+      pageSize: z.coerce.number().int().optional(),
       limit: z.coerce.number().int().optional(),
       requestedModel: z.string().trim().optional(),
       finalStatus: z.string().trim().optional()
