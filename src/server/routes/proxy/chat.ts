@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { config } from '../../config.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
 import { recordManagedKeyCostUsage } from '../../services/downstreamKeyService.js';
-import { createProxyDebugTrace, finalizeProxyDebugTrace, recordProxyDebugAttempt } from '../../services/proxyDebugTraceService.js';
+import {
+  createProxyDebugTrace,
+  finalizeProxyDebugTrace,
+  recordProxyDebugAttempt,
+  type RecordProxyDebugAttemptInput
+} from '../../services/proxyDebugTraceService.js';
 import { createProxyLog } from '../../services/proxyLogService.js';
 import {
   recordSiteApiEndpointFailure,
@@ -29,6 +34,11 @@ export const chatBodySchema = openAiProxyBodySchema.extend({
 export type OpenAiProxyBody = z.infer<typeof openAiProxyBodySchema>;
 export type ChatBody = z.infer<typeof chatBodySchema>;
 type UpstreamRequestBody = NonNullable<Parameters<typeof fetch>[1]>['body'];
+type UsageSummary = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
 
 export type OpenAiProxyEndpointOptions = {
   downstreamPath: string;
@@ -107,6 +117,7 @@ export async function proxyOpenAiEndpoint(
   });
   let retryCount = 0;
   let lastError = 'No available channel';
+  let attemptedAnyChannel = false;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const selected = await selectChannel(body.model, policy, excludedChannelIds, {
@@ -115,6 +126,7 @@ export async function proxyOpenAiEndpoint(
     if (!selected) {
       break;
     }
+    attemptedAnyChannel = true;
 
     const result = await callUpstreamChat({
       selected,
@@ -137,10 +149,16 @@ export async function proxyOpenAiEndpoint(
     retryCount += 1;
   }
 
+  const finalError = buildChannelExhaustedError({
+    attemptedAnyChannel,
+    retryCount,
+    maxAttempts,
+    lastError
+  });
   await finalizeProxyDebugTrace(traceId, {
     finalStatus: 'failed',
     finalHttpStatus: 503,
-    decisionSummary: { error: lastError, excludedChannelIds, retryCount }
+    decisionSummary: { error: finalError, excludedChannelIds, retryCount }
   });
   await createProxyLog({
     debugTraceId: traceId,
@@ -150,10 +168,10 @@ export async function proxyOpenAiEndpoint(
     httpStatus: 503,
     isStream: body.stream ?? false,
     latencyMs: Date.now() - startedAt,
-    errorMessage: lastError,
+    errorMessage: finalError,
     retryCount
   });
-  return sendError(reply, 503, 'no_available_channel', lastError, 'no_available_channel');
+  return sendError(reply, 503, 'no_available_channel', finalError, 'no_available_channel');
 }
 
 async function callUpstreamChat(input: {
@@ -215,6 +233,7 @@ async function callUpstreamChat(input: {
         fetchOptions.signal = controller.signal;
         firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
       }
+      const attemptRecord = buildAttemptRecordInput(input, target, url, headers);
       const response = await fetch(url, fetchOptions);
       if (firstByteTimer) clearTimeout(firstByteTimer);
 
@@ -224,12 +243,7 @@ async function callUpstreamChat(input: {
         lastEndpointError = error;
         const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
         await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex: input.attemptIndex,
-          endpoint: formatEndpointName(input.selected, target),
-          requestPath: input.options.upstreamPath,
-          targetUrl: url,
-          requestHeaders: headers,
+          ...attemptRecord,
           responseStatus: response.status,
           responseHeaders: headersToRecord(response.headers),
           rawErrorText: error
@@ -239,7 +253,7 @@ async function callUpstreamChat(input: {
           continue;
         }
         await recordChannelFailure(input.selected.channelId, error);
-        if (isRetryableStatus(response.status)) {
+        if (isRetryableUpstreamStatus(response.status)) {
           return { done: false, error };
         }
         await finalizeProxyDebugTrace(input.traceId, {
@@ -248,6 +262,7 @@ async function callUpstreamChat(input: {
           selectedAccountId: input.selected.accountId,
           selectedSiteId: input.selected.siteId,
           selectedSitePlatform: input.selected.sitePlatform,
+          decisionSummary: { error, retryCount: input.retryCount },
           finalStatus: 'failed',
           finalHttpStatus: response.status,
           finalUpstreamPath: url,
@@ -276,32 +291,27 @@ async function callUpstreamChat(input: {
 
       if (input.body.stream) {
         await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex: input.attemptIndex,
-          endpoint: formatEndpointName(input.selected, target),
-          requestPath: input.options.upstreamPath,
-          targetUrl: url,
-          requestHeaders: headers,
+          ...attemptRecord,
           responseStatus: response.status,
           responseHeaders: headersToRecord(response.headers)
         });
-        await streamUpstreamResponse(input.reply, response, { ...input, endpointTarget: target, targetUrl: url });
+        await streamUpstreamResponse(input.reply, response, {
+          ...input,
+          endpointTarget: target,
+          targetUrl: url,
+          attemptRecord
+        });
         return { done: true, response: input.reply };
       }
 
       const upstreamPayload = await response.json() as Record<string, unknown>;
+      const usage = extractUsage(upstreamPayload);
       const payload = input.options.transformPayload ? input.options.transformPayload(upstreamPayload) : upstreamPayload;
       await recordProxyDebugAttempt({
-        traceId: input.traceId,
-        attemptIndex: input.attemptIndex,
-        endpoint: formatEndpointName(input.selected, target),
-        requestPath: input.options.upstreamPath,
-        targetUrl: url,
-        requestHeaders: headers,
+        ...attemptRecord,
         responseStatus: response.status,
         responseHeaders: headersToRecord(response.headers)
       });
-      const usage = extractUsage(payload);
       const estimatedCost = estimateUsageCost(usage.totalTokens, input.selected.accountUnitCost);
       await recordSiteApiEndpointSuccess(target.endpointId);
       await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
@@ -353,12 +363,7 @@ async function callUpstreamChat(input: {
       lastEndpointError = message;
       const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
       await recordProxyDebugAttempt({
-        traceId: input.traceId,
-        attemptIndex: input.attemptIndex,
-        endpoint: formatEndpointName(input.selected, target),
-        requestPath: input.options.upstreamPath,
-        targetUrl: url,
-        requestHeaders: headers,
+        ...buildAttemptRecordInput(input, target, url, headers),
         rawErrorText: message
       });
       if (endpointFailure.retryable && target.endpointId !== null) {
@@ -382,6 +387,7 @@ async function streamUpstreamResponse(
     startedAt: number;
     endpointTarget: SiteApiEndpointTarget;
     targetUrl: string;
+    attemptRecord: RecordProxyDebugAttemptInput;
     options: OpenAiProxyEndpointOptions;
   }
 ): Promise<void> {
@@ -396,6 +402,7 @@ async function streamUpstreamResponse(
   try {
     const body = response.body as unknown as AsyncIterable<Uint8Array> | null;
     if (!body) throw new Error('Upstream stream body is empty');
+    const streamUsageCollector = createStreamUsageCollector();
     const outputBody = input.options.transformStream
       ? input.options.transformStream(body, {
           requestedModel: input.selected.requestedModel,
@@ -403,17 +410,24 @@ async function streamUpstreamResponse(
         })
       : body;
     for await (const chunk of outputBody) {
+      streamUsageCollector.collect(chunk);
       reply.raw.write(chunk);
     }
     reply.raw.end();
+    const streamUsage = streamUsageCollector.finish();
+    const estimatedCost = estimateUsageCost(streamUsage.totalTokens, input.selected.accountUnitCost);
     await recordSiteApiEndpointSuccess(input.endpointTarget.endpointId);
-    await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt);
+    await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
+    if (input.downstreamApiKeyId !== null) {
+      await recordManagedKeyCostUsage(input.downstreamApiKeyId, estimatedCost);
+    }
     await finalizeProxyDebugTrace(input.traceId, {
       selectedChannelId: input.selected.channelId,
       selectedRouteId: input.selected.routeId,
       selectedAccountId: input.selected.accountId,
       selectedSiteId: input.selected.siteId,
       selectedSitePlatform: input.selected.sitePlatform,
+      decisionSummary: { usage: streamUsage, retryCount: input.retryCount },
       finalStatus: 'success',
       finalHttpStatus: response.status,
       finalUpstreamPath: input.targetUrl,
@@ -432,19 +446,31 @@ async function streamUpstreamResponse(
       isStream: true,
       firstByteLatencyMs: firstByteAt - input.startedAt,
       latencyMs: Date.now() - input.startedAt,
+      promptTokens: streamUsage.promptTokens,
+      completionTokens: streamUsage.completionTokens,
+      totalTokens: streamUsage.totalTokens,
+      estimatedCost,
       retryCount: input.retryCount
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Stream failed';
+    const finalMessage = formatStreamStartedFailure(message);
     reply.raw.destroy();
     await recordSiteApiEndpointFailure(input.endpointTarget.endpointId, { message });
     await recordChannelFailure(input.selected.channelId, message);
+    await recordProxyDebugAttempt({
+      ...input.attemptRecord,
+      responseStatus: response.status,
+      responseHeaders: headersToRecord(response.headers),
+      rawErrorText: finalMessage
+    });
     await finalizeProxyDebugTrace(input.traceId, {
       selectedChannelId: input.selected.channelId,
       selectedRouteId: input.selected.routeId,
       selectedAccountId: input.selected.accountId,
       selectedSiteId: input.selected.siteId,
       selectedSitePlatform: input.selected.sitePlatform,
+      decisionSummary: { error: finalMessage, retryCount: input.retryCount, streamStarted: true },
       finalStatus: 'failed',
       finalHttpStatus: response.status,
       finalUpstreamPath: input.targetUrl,
@@ -463,7 +489,7 @@ async function streamUpstreamResponse(
       isStream: true,
       firstByteLatencyMs: firstByteAt - input.startedAt,
       latencyMs: Date.now() - input.startedAt,
-      errorMessage: message,
+      errorMessage: finalMessage,
       retryCount: input.retryCount
     });
   }
@@ -475,8 +501,53 @@ function formatEndpointName(selected: SelectedChannel, target: SiteApiEndpointTa
     : `${selected.siteName}#${target.endpointId}`;
 }
 
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+function buildAttemptRecordInput(
+  input: {
+    selected: SelectedChannel;
+    traceId: number;
+    attemptIndex: number;
+    options: OpenAiProxyEndpointOptions;
+  },
+  target: SiteApiEndpointTarget,
+  targetUrl: string,
+  requestHeaders: Record<string, string>
+): RecordProxyDebugAttemptInput {
+  return {
+    traceId: input.traceId,
+    attemptIndex: input.attemptIndex,
+    channelId: input.selected.channelId,
+    routeId: input.selected.routeId,
+    accountId: input.selected.accountId,
+    siteId: input.selected.siteId,
+    sitePlatform: input.selected.sitePlatform,
+    modelActual: input.selected.sourceModel,
+    endpointId: target.endpointId,
+    endpoint: formatEndpointName(input.selected, target),
+    requestPath: input.options.upstreamPath,
+    targetUrl,
+    requestHeaders
+  };
+}
+
+function isRetryableUpstreamStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function buildChannelExhaustedError(input: {
+  attemptedAnyChannel: boolean;
+  retryCount: number;
+  maxAttempts: number;
+  lastError: string;
+}): string {
+  if (!input.attemptedAnyChannel) return 'No available channel';
+  if (input.retryCount >= input.maxAttempts) {
+    return `Reached max channel attempts (${input.maxAttempts}): ${input.lastError}`;
+  }
+  return `No available channel after retryable channel failures: ${input.lastError}`;
+}
+
+function formatStreamStartedFailure(message: string): string {
+  return `已开始输出流后失败: ${message}`;
 }
 
 function upstreamStatusToClientStatus(status: number): number {
@@ -568,21 +639,133 @@ function mergeCommaHeader(current: string, additions: string[]): string {
 
 function extractUsageNumber(payload: Record<string, unknown>, key: string): number {
   const usage = payload.usage;
-  const value = usage && typeof usage === 'object'
+  const usageMetadata = payload.usageMetadata || payload.usage_metadata;
+  const value = usage && typeof usage === 'object' && (usage as Record<string, unknown>)[key] !== undefined
     ? (usage as Record<string, unknown>)[key]
-    : payload[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    : usageMetadata && typeof usageMetadata === 'object' && (usageMetadata as Record<string, unknown>)[key] !== undefined
+      ? (usageMetadata as Record<string, unknown>)[key]
+      : payload[key];
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numberValue) ? Math.max(0, Math.round(numberValue)) : 0;
 }
 
-function extractUsage(payload: Record<string, unknown>) {
-  const promptTokens = extractUsageNumber(payload, 'prompt_tokens') || extractUsageNumber(payload, 'input_tokens');
-  const completionTokens = extractUsageNumber(payload, 'completion_tokens') || extractUsageNumber(payload, 'output_tokens');
-  const explicitTotalTokens = extractUsageNumber(payload, 'total_tokens');
+function emptyUsage(): UsageSummary {
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+}
+
+function mergeUsage(current: UsageSummary, next: UsageSummary): UsageSummary {
+  const promptTokens = Math.max(current.promptTokens, next.promptTokens);
+  const completionTokens = Math.max(current.completionTokens, next.completionTokens);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: Math.max(current.totalTokens, next.totalTokens, promptTokens + completionTokens)
+  };
+}
+
+function extractUsage(payload: Record<string, unknown>): UsageSummary {
+  const promptTokens = extractUsageNumber(payload, 'prompt_tokens')
+    || extractUsageNumber(payload, 'input_tokens')
+    || extractUsageNumber(payload, 'promptTokenCount')
+    || extractUsageNumber(payload, 'prompt_token_count');
+  const completionTokens = extractUsageNumber(payload, 'completion_tokens')
+    || extractUsageNumber(payload, 'output_tokens')
+    || extractUsageNumber(payload, 'candidatesTokenCount')
+    || extractUsageNumber(payload, 'candidates_token_count');
+  const explicitTotalTokens = extractUsageNumber(payload, 'total_tokens')
+    || extractUsageNumber(payload, 'totalTokenCount')
+    || extractUsageNumber(payload, 'total_token_count');
   return {
     promptTokens,
     completionTokens,
     totalTokens: explicitTotalTokens || promptTokens + completionTokens
   };
+}
+
+function extractUsageFromSsePayload(payload: Record<string, unknown>): UsageSummary {
+  // 兼容 Responses、Chat、Anthropic、Gemini 常见 usage 位置。
+  const responsePayload = payload.response;
+  if (responsePayload && typeof responsePayload === 'object') {
+    const usage = extractUsage(responsePayload as Record<string, unknown>);
+    if (usage.totalTokens > 0) return usage;
+  }
+
+  const messagePayload = payload.message;
+  if (messagePayload && typeof messagePayload === 'object') {
+    const usage = extractUsage(messagePayload as Record<string, unknown>);
+    if (usage.totalTokens > 0) return usage;
+  }
+
+  const usage = extractUsage(payload);
+  if (usage.totalTokens > 0) return usage;
+
+  const usageMetadata = payload.usageMetadata || payload.usage_metadata;
+  if (usageMetadata && typeof usageMetadata === 'object') {
+    return extractUsage(usageMetadata as Record<string, unknown>);
+  }
+
+  return usage;
+}
+
+function createStreamUsageCollector(): { collect: (chunk: Uint8Array) => void; finish: () => UsageSummary } {
+  const decoder = new TextDecoder();
+  let usage = emptyUsage();
+  let buffer = '';
+
+  return {
+    collect(chunk: Uint8Array) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const pulled = pullSseDataEvents(buffer);
+      buffer = pulled.rest;
+      for (const data of pulled.events) {
+        usage = mergeUsage(usage, parseSseUsageData(data));
+      }
+    },
+    finish() {
+      buffer += decoder.decode();
+      const pulled = pullSseDataEvents(`${buffer}\n\n`);
+      for (const data of pulled.events) {
+        usage = mergeUsage(usage, parseSseUsageData(data));
+      }
+      return usage;
+    }
+  };
+}
+
+function pullSseDataEvents(buffer: string): { events: string[]; rest: string } {
+  let rest = buffer.replace(/\r\n/g, '\n');
+  const events: string[] = [];
+
+  while (true) {
+    const boundary = rest.indexOf('\n\n');
+    if (boundary < 0) break;
+    const block = rest.slice(0, boundary);
+    rest = rest.slice(boundary + 2);
+
+    const dataLines = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart());
+    if (dataLines.length === 0) continue;
+
+    const data = dataLines.join('\n').trim();
+    if (!data || data === '[DONE]') continue;
+    events.push(data);
+  }
+
+  return { events, rest };
+}
+
+function parseSseUsageData(data: string): UsageSummary {
+  try {
+    const payload = JSON.parse(data) as unknown;
+    if (payload && typeof payload === 'object') {
+      return extractUsageFromSsePayload(payload as Record<string, unknown>);
+    }
+  } catch {
+    // 非 JSON SSE 数据只影响统计，不影响原始流透传。
+  }
+  return emptyUsage();
 }
 
 function estimateUsageCost(totalTokens: number, unitCost: number | null): number {

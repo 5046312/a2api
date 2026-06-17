@@ -87,6 +87,12 @@ export type DownstreamKeyView = {
   updatedAt: string;
 };
 
+export type DownstreamKeySecretView = {
+  id: number;
+  key: string;
+  keyMasked: string;
+};
+
 type DownstreamKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 
 export function createDownstreamKeyValue(): string {
@@ -124,6 +130,21 @@ export function toDownstreamKeyView(row: DownstreamKeyRow, includeKey = false): 
 export async function listDownstreamKeys(): Promise<DownstreamKeyView[]> {
   const rows = await db.select().from(schema.downstreamApiKeys).orderBy(desc(schema.downstreamApiKeys.id)).all();
   return rows.map((row) => toDownstreamKeyView(row));
+}
+
+export async function getDownstreamKeySecret(id: number): Promise<DownstreamKeySecretView | null> {
+  // 管理端列表默认只展示掩码；复制时按需读取单条明文，避免完整密钥常驻列表数据。
+  const row = await db
+    .select({ id: schema.downstreamApiKeys.id, key: schema.downstreamApiKeys.key })
+    .from(schema.downstreamApiKeys)
+    .where(eq(schema.downstreamApiKeys.id, id))
+    .get();
+  if (!row) return null;
+  return {
+    id: row.id,
+    key: row.key,
+    keyMasked: maskSecret(row.key)
+  };
 }
 
 export async function getDownstreamKeyPolicyById(id: number): Promise<DownstreamKeyPolicyResult> {

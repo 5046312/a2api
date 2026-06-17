@@ -62,6 +62,7 @@ export async function createProxyLog(input: ProxyLogInput): Promise<void> {
 export async function listProxyLogs(query: {
   page?: number;
   pageSize?: number;
+  requestId?: number;
   status?: string;
   model?: string;
   siteId?: number;
@@ -74,6 +75,7 @@ export async function listProxyLogs(query: {
   const page = Math.max(1, query.page || 1);
   const pageSize = Math.min(200, Math.max(1, query.pageSize || 50));
   const filters: SQL[] = [];
+  if (query.requestId) filters.push(eq(schema.proxyLogs.debugTraceId, query.requestId));
   if (query.status) filters.push(eq(schema.proxyLogs.status, query.status));
   if (query.model) {
     const keyword = `%${query.model}%`;
@@ -89,6 +91,7 @@ export async function listProxyLogs(query: {
   const items = await db
     .select({
       id: schema.proxyLogs.id,
+      requestId: schema.proxyLogs.debugTraceId,
       routeId: schema.proxyLogs.routeId,
       channelId: schema.proxyLogs.channelId,
       accountId: schema.proxyLogs.accountId,
@@ -111,12 +114,14 @@ export async function listProxyLogs(query: {
       errorMessage: schema.proxyLogs.errorMessage,
       retryCount: schema.proxyLogs.retryCount,
       createdAt: schema.proxyLogs.createdAt,
+      downstreamPath: schema.proxyDebugTraces.downstreamPath,
       siteId: schema.accounts.siteId,
       siteName: schema.sites.name,
       accountName: schema.accounts.username,
       downstreamKeyName: schema.downstreamApiKeys.name
     })
     .from(schema.proxyLogs)
+    .leftJoin(schema.proxyDebugTraces, eq(schema.proxyDebugTraces.id, schema.proxyLogs.debugTraceId))
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
     .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .leftJoin(schema.downstreamApiKeys, eq(schema.downstreamApiKeys.id, schema.proxyLogs.downstreamApiKeyId))
@@ -128,6 +133,7 @@ export async function listProxyLogs(query: {
   const totalRow = await db
     .select({ count: sql<number>`count(*)` })
     .from(schema.proxyLogs)
+    .leftJoin(schema.proxyDebugTraces, eq(schema.proxyDebugTraces.id, schema.proxyLogs.debugTraceId))
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
     .where(where)
     .get();
@@ -138,6 +144,7 @@ export async function getProxyLog(id: number) {
   const row = await db
     .select({
       id: schema.proxyLogs.id,
+      requestId: schema.proxyLogs.debugTraceId,
       routeId: schema.proxyLogs.routeId,
       channelId: schema.proxyLogs.channelId,
       accountId: schema.proxyLogs.accountId,
@@ -160,12 +167,14 @@ export async function getProxyLog(id: number) {
       errorMessage: schema.proxyLogs.errorMessage,
       retryCount: schema.proxyLogs.retryCount,
       createdAt: schema.proxyLogs.createdAt,
+      downstreamPath: schema.proxyDebugTraces.downstreamPath,
       siteId: schema.accounts.siteId,
       siteName: schema.sites.name,
       accountName: schema.accounts.username,
       downstreamKeyName: schema.downstreamApiKeys.name
     })
     .from(schema.proxyLogs)
+    .leftJoin(schema.proxyDebugTraces, eq(schema.proxyDebugTraces.id, schema.proxyLogs.debugTraceId))
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
     .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .leftJoin(schema.downstreamApiKeys, eq(schema.downstreamApiKeys.id, schema.proxyLogs.downstreamApiKeyId))

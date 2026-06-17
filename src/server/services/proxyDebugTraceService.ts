@@ -1,4 +1,4 @@
-import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
@@ -15,6 +15,13 @@ export type CreateProxyDebugTraceInput = {
 export type RecordProxyDebugAttemptInput = {
   traceId: number;
   attemptIndex: number;
+  channelId?: number | null;
+  routeId?: number | null;
+  accountId?: number | null;
+  siteId?: number | null;
+  sitePlatform?: string | null;
+  modelActual?: string | null;
+  endpointId?: number | null;
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -60,6 +67,13 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
     .values({
       traceId: input.traceId,
       attemptIndex: input.attemptIndex,
+      channelId: input.channelId ?? null,
+      routeId: input.routeId ?? null,
+      accountId: input.accountId ?? null,
+      siteId: input.siteId ?? null,
+      sitePlatform: input.sitePlatform ?? null,
+      modelActual: input.modelActual ?? null,
+      endpointId: input.endpointId ?? null,
       endpoint: input.endpoint,
       requestPath: input.requestPath,
       targetUrl: input.targetUrl,
@@ -73,6 +87,16 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
     .onConflictDoUpdate({
       target: [schema.proxyDebugAttempts.traceId, schema.proxyDebugAttempts.attemptIndex],
       set: {
+        channelId: input.channelId ?? null,
+        routeId: input.routeId ?? null,
+        accountId: input.accountId ?? null,
+        siteId: input.siteId ?? null,
+        sitePlatform: input.sitePlatform ?? null,
+        modelActual: input.modelActual ?? null,
+        endpointId: input.endpointId ?? null,
+        endpoint: input.endpoint,
+        requestPath: input.requestPath,
+        targetUrl: input.targetUrl,
         responseStatus: input.responseStatus ?? null,
         responseHeadersJson: input.responseHeaders ? stringifyJson(sanitizeHeaders(input.responseHeaders)) : null,
         rawErrorText: input.rawErrorText ? input.rawErrorText.slice(0, 1000) : null
@@ -105,25 +129,32 @@ export async function listProxyDebugTraces(query: {
   page?: number | undefined;
   pageSize?: number | undefined;
   limit?: number | undefined;
+  requestId?: number | undefined;
   requestedModel?: string | undefined;
   finalStatus?: string | undefined;
 }) {
   const page = Math.max(1, query.page || 1);
   const pageSize = Math.min(200, Math.max(1, query.pageSize || query.limit || 50));
   const filters: SQL[] = [];
+  if (query.requestId) filters.push(eq(schema.proxyDebugTraces.id, query.requestId));
   if (query.requestedModel) filters.push(eq(schema.proxyDebugTraces.requestedModel, query.requestedModel));
   if (query.finalStatus) filters.push(eq(schema.proxyDebugTraces.finalStatus, query.finalStatus));
   const where = filters.length > 0 ? and(...filters) : undefined;
   const items = await db
     .select({
       id: schema.proxyDebugTraces.id,
+      requestId: schema.proxyDebugTraces.id,
       downstreamPath: schema.proxyDebugTraces.downstreamPath,
       requestedModel: schema.proxyDebugTraces.requestedModel,
       downstreamApiKeyId: schema.proxyDebugTraces.downstreamApiKeyId,
       selectedChannelId: schema.proxyDebugTraces.selectedChannelId,
       selectedRouteId: schema.proxyDebugTraces.selectedRouteId,
+      selectedAccountId: schema.proxyDebugTraces.selectedAccountId,
+      selectedSiteId: schema.proxyDebugTraces.selectedSiteId,
+      selectedSitePlatform: schema.proxyDebugTraces.selectedSitePlatform,
       finalStatus: schema.proxyDebugTraces.finalStatus,
       finalHttpStatus: schema.proxyDebugTraces.finalHttpStatus,
+      finalUpstreamPath: schema.proxyDebugTraces.finalUpstreamPath,
       createdAt: schema.proxyDebugTraces.createdAt,
       updatedAt: schema.proxyDebugTraces.updatedAt,
       attemptCount: sql<number>`count(${schema.proxyDebugAttempts.id})`
@@ -151,9 +182,10 @@ export async function getProxyDebugTraceDetail(id: number) {
     .select()
     .from(schema.proxyDebugAttempts)
     .where(eq(schema.proxyDebugAttempts.traceId, id))
-    .orderBy(schema.proxyDebugAttempts.attemptIndex)
+    .orderBy(asc(schema.proxyDebugAttempts.attemptIndex))
     .all();
   return {
+    requestId: trace.id,
     ...trace,
     requestHeaders: parseJsonObject(trace.requestHeadersJson),
     decisionSummary: parseJsonObject(trace.decisionSummaryJson),

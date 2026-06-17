@@ -22,6 +22,7 @@ const logsTotal = ref(0);
 const tracesPage = ref(1);
 const tracesTotal = ref(0);
 const filters = reactive({
+  requestId: '',
   status: '',
   model: '',
   accountId: '',
@@ -64,7 +65,7 @@ const downstreamKeyOptions = computed(() => [
   ...downstreamKeys.value.map((key) => ({ label: key.name, value: String(key.id) }))
 ]);
 const detailDrawerTitle = computed(() => {
-  if (selectedLog.value) return `日志详情 #${selectedLog.value.id}`;
+  if (selectedLog.value) return `请求详情 #${selectedLog.value.requestId || selectedLog.value.debugTraceId || selectedLog.value.id}`;
   if (selectedTrace.value) return `Debug Trace #${selectedTrace.value.id}`;
   return '详情';
 });
@@ -81,6 +82,25 @@ function formatJson(value: unknown) {
 
 function formatMs(value: number | null) {
   return value === null ? '-' : `${value}ms`;
+}
+
+function formatId(value: number | null | undefined) {
+  return value ? `#${value}` : '-';
+}
+
+function finalResultText() {
+  if (!selectedLog.value) return '-';
+  if (selectedLog.value.status === 'success') return '请求最终成功';
+  return selectedLog.value.errorMessage || '请求最终失败';
+}
+
+function formatAttemptRoute(attempt: ProxyDebugTrace['attempts'][number]) {
+  return `${formatId(attempt.routeId)} / ${formatId(attempt.channelId)}`;
+}
+
+function formatAttemptAccount(attempt: ProxyDebugTrace['attempts'][number]) {
+  const site = attempt.siteId ? `${formatId(attempt.siteId)}${attempt.sitePlatform ? ` (${attempt.sitePlatform})` : ''}` : '-';
+  return `${formatId(attempt.accountId)} / ${site}`;
 }
 
 // 日志时间只展示月日和时分秒，列表里不重复显示年份。
@@ -135,6 +155,7 @@ async function loadLogs() {
     const data = await api.listProxyLogs({
       page: logsPage.value,
       pageSize: PAGE_SIZE,
+      requestId: filters.requestId,
       status: filters.status,
       model: filters.model,
       accountId: filters.accountId,
@@ -160,6 +181,7 @@ async function loadTraces() {
     const data = await api.listProxyDebugTraces({
       page: tracesPage.value,
       pageSize: PAGE_SIZE,
+      requestId: filters.requestId,
       requestedModel: filters.model,
       finalStatus: filters.status
     });
@@ -201,9 +223,11 @@ async function loadDetail(log: ProxyLog) {
   loadingDetailId.value = log.id;
   error.value = '';
   try {
-    selectedLog.value = await api.getProxyLog(log.id);
+    const detail = await api.getProxyLog(log.id);
+    selectedLog.value = detail;
     selectedTrace.value = null;
     detailDrawerVisible.value = true;
+    if (detail.debugTraceId) await loadTrace(detail.debugTraceId, true);
   } catch (err) {
     setError(err, '加载日志详情失败');
   } finally {
@@ -240,6 +264,7 @@ onMounted(loadPage);
           class="toolbar-select"
           @update:value="reloadAll"
         />
+        <n-input v-model:value="filters.requestId" placeholder="请求 ID" @keyup.enter="reloadAll" />
         <n-input v-model:value="filters.model" placeholder="模型关键字" @keyup.enter="reloadAll" />
         <n-select v-model:value="filters.isStream" :options="streamOptions" class="toolbar-select" @update:value="reloadAll" />
         <n-input v-model:value="filters.from" placeholder="起始 ISO 时间" @keyup.enter="reloadAll" />
@@ -259,8 +284,10 @@ onMounted(loadPage);
               <thead>
                 <tr>
                   <th>时间</th>
+                  <th>请求 ID</th>
                   <th>状态</th>
                   <th>HTTP</th>
+                  <th>路径</th>
                   <th>请求模型</th>
                   <th>实际模型</th>
                   <th>上游账号</th>
@@ -276,8 +303,10 @@ onMounted(loadPage);
               <tbody>
                 <tr v-for="log in logs" :key="log.id">
                   <td class="mono">{{ formatTime(log.createdAt) }}</td>
+                  <td class="mono">{{ formatId(log.requestId || log.debugTraceId) }}</td>
                   <td><n-tag size="small" :type="logStatusTagType(log.status)">{{ formatLogStatus(log.status) }}</n-tag></td>
                   <td>{{ log.httpStatus || '-' }}</td>
+                  <td class="mono">{{ log.downstreamPath || '-' }}</td>
                   <td class="mono">{{ log.modelRequested || '-' }}</td>
                   <td class="mono">{{ log.modelActual || '-' }}</td>
                   <td>{{ log.accountName || (log.accountId ? `#${log.accountId}` : '-') }}</td>
@@ -294,7 +323,7 @@ onMounted(loadPage);
                   </td>
                 </tr>
                 <tr v-if="!loading && logs.length === 0">
-                  <td class="empty" colspan="13">暂无日志</td>
+                  <td class="empty" colspan="15">暂无日志</td>
                 </tr>
               </tbody>
             </n-table>
@@ -322,11 +351,12 @@ onMounted(loadPage);
               <thead>
                 <tr>
                   <th>时间</th>
+                  <th>请求 ID</th>
                   <th>路径</th>
                   <th>模型</th>
                   <th>状态</th>
                   <th>HTTP</th>
-                  <th>模型</th>
+                  <th>路由</th>
                   <th>尝试</th>
                   <th>操作</th>
                 </tr>
@@ -334,6 +364,7 @@ onMounted(loadPage);
               <tbody>
                 <tr v-for="trace in traces" :key="trace.id">
                   <td class="mono">{{ formatTime(trace.createdAt) }}</td>
+                  <td class="mono">{{ formatId(trace.requestId) }}</td>
                   <td class="mono">{{ trace.downstreamPath }}</td>
                   <td class="mono">{{ trace.requestedModel || '-' }}</td>
                   <td>{{ formatLogStatus(trace.finalStatus) }}</td>
@@ -345,7 +376,7 @@ onMounted(loadPage);
                   </td>
                 </tr>
                 <tr v-if="!loading && traces.length === 0">
-                  <td class="empty" colspan="8">暂无 Trace</td>
+                  <td class="empty" colspan="9">暂无 Trace</td>
                 </tr>
               </tbody>
             </n-table>
@@ -373,48 +404,37 @@ onMounted(loadPage);
           <n-card class="admin-card" :bordered="false" v-if="selectedLog">
             <div class="panel-header">
               <div>
-                <h2>日志详情 #{{ selectedLog.id }}</h2>
-                <p class="muted">{{ selectedLog.modelRequested || '-' }} -> {{ selectedLog.modelActual || '-' }}</p>
+                <h2>请求详情 {{ formatId(selectedLog.requestId || selectedLog.debugTraceId) }}</h2>
+                <p class="muted">{{ selectedLog.downstreamPath || '-' }} · {{ selectedLog.modelRequested || '-' }} -> {{ selectedLog.modelActual || '-' }}</p>
               </div>
             </div>
+            <h3 class="detail-section-title">基本信息</h3>
             <div class="table-wrap">
               <n-table size="small" :bordered="false" single-line class="admin-table">
                 <tbody>
                   <tr>
+                    <th>请求 ID</th>
+                    <td class="mono">{{ formatId(selectedLog.requestId || selectedLog.debugTraceId) }}</td>
                     <th>时间</th>
                     <td class="mono">{{ formatTime(selectedLog.createdAt) }}</td>
-                    <th>模型 / 通道</th>
-                    <td>{{ selectedLog.routeId || '-' }} / {{ selectedLog.channelId || '-' }}</td>
                   </tr>
                   <tr>
-                    <th>状态 / HTTP</th>
-                    <td>{{ formatLogStatus(selectedLog.status) }} / {{ selectedLog.httpStatus || '-' }}</td>
+                    <th>路径</th>
+                    <td class="mono">{{ selectedLog.downstreamPath || '-' }}</td>
                     <th>流式</th>
                     <td>{{ selectedLog.isStream ? '是' : '否' }}</td>
                   </tr>
                   <tr>
-                    <th>上游账号</th>
-                    <td colspan="3">{{ selectedLog.accountName || (selectedLog.accountId ? `#${selectedLog.accountId}` : '-') }}</td>
+                    <th>请求模型</th>
+                    <td class="mono">{{ selectedLog.modelRequested || '-' }}</td>
+                    <th>实际模型</th>
+                    <td class="mono">{{ selectedLog.modelActual || '-' }}</td>
                   </tr>
                   <tr>
                     <th>密钥</th>
                     <td>{{ selectedLog.downstreamKeyName || (selectedLog.downstreamApiKeyId ? `#${selectedLog.downstreamApiKeyId}` : '-') }}</td>
-                    <th>重试次数</th>
-                    <td>{{ selectedLog.retryCount }}</td>
-                  </tr>
-                  <tr>
-                    <th>Trace</th>
-                    <td colspan="3">
-                      <n-button text
-                        v-if="selectedLog.debugTraceId"
-                        attr-type="button"
-                        :disabled="loadingTrace"
-                        @click="loadTrace(selectedLog.debugTraceId, true)"
-                      >
-                        {{ loadingTrace ? '加载中' : `查看 Trace #${selectedLog.debugTraceId}` }}
-                      </n-button>
-                      <span v-else>-</span>
-                    </td>
+                    <th>尝试次数</th>
+                    <td>{{ selectedTrace?.attempts.length ?? selectedLog.retryCount + 1 }}</td>
                   </tr>
                   <tr>
                     <th>输入 / 输出</th>
@@ -428,9 +448,31 @@ onMounted(loadPage);
                     <th>费用</th>
                     <td>{{ selectedLog.estimatedCost.toFixed(6) }}</td>
                   </tr>
+                </tbody>
+              </n-table>
+            </div>
+
+            <h3 class="detail-section-title">最终结果</h3>
+            <div class="table-wrap">
+              <n-table size="small" :bordered="false" single-line class="admin-table">
+                <tbody>
                   <tr>
-                    <th>错误</th>
-                    <td colspan="3" class="error-cell">{{ selectedLog.errorMessage || '-' }}</td>
+                    <th>状态 / HTTP</th>
+                    <td>{{ formatLogStatus(selectedLog.status) }} / {{ selectedLog.httpStatus || '-' }}</td>
+                    <th>结果说明</th>
+                    <td class="error-cell">{{ finalResultText() }}</td>
+                  </tr>
+                  <tr>
+                    <th>最终路由 / 通道</th>
+                    <td>{{ formatId(selectedLog.routeId) }} / {{ formatId(selectedLog.channelId) }}</td>
+                    <th>最终上游账号</th>
+                    <td>{{ selectedLog.accountName || formatId(selectedLog.accountId) }}</td>
+                  </tr>
+                  <tr>
+                    <th>最终站点</th>
+                    <td>{{ selectedLog.siteName || formatId(selectedLog.siteId) }}</td>
+                    <th>最终上游地址</th>
+                    <td class="mono">{{ selectedTrace?.finalUpstreamPath || '-' }}</td>
                   </tr>
                   <tr>
                     <th>Billing</th>
@@ -444,7 +486,7 @@ onMounted(loadPage);
           <n-card class="admin-card" :bordered="false" v-if="selectedTrace">
             <div class="panel-header">
               <div>
-                <h2>Debug Trace #{{ selectedTrace.id }}</h2>
+                <h2>{{ selectedLog ? '尝试列表' : `Debug Trace #${selectedTrace.id}` }}</h2>
                 <p class="muted">{{ formatLogStatus(selectedTrace.finalStatus) }} / {{ selectedTrace.finalHttpStatus || '-' }}</p>
               </div>
             </div>
@@ -453,6 +495,9 @@ onMounted(loadPage);
                 <thead>
                   <tr>
                     <th>尝试</th>
+                    <th>路由 / 通道</th>
+                    <th>账号 / 站点</th>
+                    <th>实际模型</th>
                     <th>Endpoint</th>
                     <th>目标</th>
                     <th>状态</th>
@@ -462,13 +507,16 @@ onMounted(loadPage);
                 <tbody>
                   <tr v-for="attempt in selectedTrace.attempts" :key="attempt.id">
                     <td>{{ attempt.attemptIndex }}</td>
+                    <td>{{ formatAttemptRoute(attempt) }}</td>
+                    <td>{{ formatAttemptAccount(attempt) }}</td>
+                    <td class="mono">{{ attempt.modelActual || '-' }}</td>
                     <td>{{ attempt.endpoint }}</td>
                     <td class="mono">{{ attempt.targetUrl }}</td>
                     <td>{{ attempt.responseStatus || '-' }}</td>
                     <td class="error-cell">{{ attempt.rawErrorText || '-' }}</td>
                   </tr>
                   <tr v-if="selectedTrace.attempts.length === 0">
-                    <td class="empty" colspan="5">暂无尝试记录</td>
+                    <td class="empty" colspan="8">暂无尝试记录</td>
                   </tr>
                 </tbody>
               </n-table>
@@ -485,5 +533,11 @@ onMounted(loadPage);
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.detail-section-title {
+  margin: 18px 0 10px;
+  font-size: 15px;
+  font-weight: 700;
 }
 </style>

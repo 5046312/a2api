@@ -317,6 +317,12 @@ export type DownstreamKey = {
   lastUsedAt: string | null;
 };
 
+export type DownstreamKeySecret = {
+  id: number;
+  key: string;
+  keyMasked: string;
+};
+
 export type DownstreamKeyBatchAction = 'enable' | 'disable' | 'delete' | 'resetUsage';
 
 export type DownstreamKeyBatchResult = {
@@ -333,6 +339,8 @@ export type CredentialRef = { kind: 'account'; siteId: number; accountId: number
 
 export type ProxyLog = {
   id: number;
+  requestId: number | null;
+  downstreamPath: string | null;
   createdAt: string;
   routeId: number | null;
   channelId: number | null;
@@ -365,6 +373,13 @@ export type ProxyDebugAttempt = {
   id: number;
   traceId: number;
   attemptIndex: number;
+  channelId: number | null;
+  routeId: number | null;
+  accountId: number | null;
+  siteId: number | null;
+  sitePlatform: string | null;
+  modelActual: string | null;
+  endpointId: number | null;
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -378,6 +393,7 @@ export type ProxyDebugAttempt = {
 
 export type ProxyDebugTrace = {
   id: number;
+  requestId: number;
   downstreamPath: string;
   requestedModel: string | null;
   downstreamApiKeyId: number | null;
@@ -918,6 +934,7 @@ export const api = {
     ),
   clearRouteCooldown: (id: number) => apiRequest(`/api/routes/${id}/cooldown/clear`, { method: 'POST' }),
   listDownstreamKeys: () => apiRequest<{ items: DownstreamKey[] }>('/api/downstream-keys'),
+  getDownstreamKeySecret: (id: number) => apiRequest<DownstreamKeySecret>(`/api/downstream-keys/${id}/secret`),
   createDownstreamKey: (body: unknown) =>
     apiRequest<DownstreamKey>('/api/downstream-keys', { method: 'POST', body }),
   updateDownstreamKey: (id: number, body: unknown) =>

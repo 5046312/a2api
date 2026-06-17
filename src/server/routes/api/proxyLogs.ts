@@ -11,6 +11,7 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
     const query = z.object({
       page: z.coerce.number().int().optional(),
       pageSize: z.coerce.number().int().optional(),
+      requestId: z.coerce.number().int().positive().optional(),
       status: z.string().optional(),
       model: z.string().optional(),
       siteId: z.coerce.number().int().optional(),
@@ -35,6 +36,7 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
       page: z.coerce.number().int().optional(),
       pageSize: z.coerce.number().int().optional(),
       limit: z.coerce.number().int().optional(),
+      requestId: z.coerce.number().int().positive().optional(),
       requestedModel: z.string().trim().optional(),
       finalStatus: z.string().trim().optional()
     }).parse(request.query);

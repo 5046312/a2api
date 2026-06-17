@@ -23,15 +23,17 @@ P0 implemented:
 - Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
 - Upstream account API Key is stored on the account; legacy key-list rows are only read as old-data fallback and are not used to generate model channels.
 - Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
-- Downstream key request and cost usage accounting, with upstream account `unitCost` used for usage-based cost estimates and admin usage reset.
+- Downstream key request and cost usage accounting, with upstream account `unitCost` used for usage-based cost estimates from non-stream JSON usage or stream SSE usage, plus admin usage reset.
+- Downstream key list keeps masked values in bulk responses and supports on-demand full-key copy from the key column.
 - Upstream account-level proxy configuration stored per upstream account and preferred before site or system proxy.
 - Legacy account key-list compatibility is kept internally for old imports; the admin UI uses upstream accounts only.
 - Dedicated platform adapters for OneHub, DoneHub, Veloera, AnyRouter, CliProxyAPI, and Claude model discovery.
 - Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
 - Scheduled proxy log cleanup controlled by cron and retention days.
-- Proxy log filters by status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables.
-- Proxy log detail view with routing, cache token, billing, retry, and error fields.
-- Proxy debug trace records for Chat proxy attempts, linked from proxy log details and available from the paginated Debug Trace tab.
+- Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables.
+- Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
+- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, and channel attempt fields.
+- Proxy debug trace records for immediate model proxy attempts, exposed in request details and available from the paginated Debug Trace tab.
 - Runtime settings snapshot and editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
 - Maintenance APIs for clearing runtime caches and usage data.

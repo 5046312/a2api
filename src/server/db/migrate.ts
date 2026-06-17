@@ -268,6 +268,13 @@ CREATE TABLE IF NOT EXISTS proxy_debug_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   trace_id INTEGER NOT NULL REFERENCES proxy_debug_traces(id) ON DELETE CASCADE,
   attempt_index INTEGER NOT NULL,
+  channel_id INTEGER,
+  route_id INTEGER,
+  account_id INTEGER,
+  site_id INTEGER,
+  site_platform TEXT,
+  model_actual TEXT,
+  endpoint_id INTEGER,
   endpoint TEXT NOT NULL,
   request_path TEXT NOT NULL,
   target_url TEXT NOT NULL,
@@ -406,6 +413,13 @@ CREATE INDEX IF NOT EXISTS events_type_created_idx ON events(type, created_at);
 `);
 
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'channel_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN channel_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'account_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN account_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'site_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN site_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'site_platform', 'ALTER TABLE proxy_debug_attempts ADD COLUMN site_platform TEXT');
+  ensureColumn('proxy_debug_attempts', 'model_actual', 'ALTER TABLE proxy_debug_attempts ADD COLUMN model_actual TEXT');
+  ensureColumn('proxy_debug_attempts', 'endpoint_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN endpoint_id INTEGER');
   migrateAccountApiKeysToInternalCredentials();
 }
 

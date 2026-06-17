@@ -5,6 +5,7 @@ import {
   createDownstreamKey,
   deleteDownstreamKey,
   downstreamKeyBatchPayloadSchema,
+  getDownstreamKeySecret,
   downstreamKeyPayloadSchema,
   listDownstreamKeys,
   resetDownstreamKeyUsage,
@@ -17,6 +18,13 @@ const idParamsSchema = z.object({ id: z.coerce.number().int().positive() });
 
 export async function downstreamKeysRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/downstream-keys', async () => ({ items: await listDownstreamKeys() }));
+
+  app.get('/api/downstream-keys/:id/secret', async (request, reply) => {
+    const params = idParamsSchema.parse(request.params);
+    const key = await getDownstreamKeySecret(params.id);
+    if (!key) return sendError(reply, 404, 'validation_error', 'Downstream key not found', 'downstream_key_not_found');
+    return key;
+  });
 
   app.post('/api/downstream-keys', async (request, reply) => {
     const parsed = downstreamKeyPayloadSchema.safeParse(request.body);

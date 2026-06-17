@@ -13,6 +13,7 @@ const showKeyDrawer = ref(false);
 const error = ref('');
 const message = ref('');
 const createdKey = ref('');
+const copyingKeyId = ref<number | null>(null);
 const editingKeyId = ref<number | null>(null);
 const dialog = useDialog();
 const notice = useMessage();
@@ -136,6 +137,22 @@ function keyPolicySummary(key: DownstreamKey) {
     excludedAccountCount > 0 ? '含排除' : ''
   ].filter(Boolean);
   return parts.join(' / ') || '默认';
+}
+
+async function copyKeyValue(key: DownstreamKey) {
+  if (copyingKeyId.value === key.id) return;
+  copyingKeyId.value = key.id;
+  error.value = '';
+  try {
+    // 列表默认只拿掩码；点击时再按需读取单条明文，避免完整密钥长期停留在页面数据里。
+    const secret = key.key?.trim() ? key.key : (await api.getDownstreamKeySecret(key.id)).key;
+    await navigator.clipboard.writeText(secret);
+    notice.success(`已复制密钥 ${key.name}`);
+  } catch (err) {
+    setError(err, '复制密钥失败，请稍后重试');
+  } finally {
+    copyingKeyId.value = null;
+  }
 }
 
 function batchKeyActionLabel(action: DownstreamKeyBatchAction) {
@@ -479,7 +496,22 @@ onMounted(loadKeys);
                 <n-checkbox :checked="isKeySelected(key.id)" @update:checked="toggleKeySelection(key.id)" />
               </td>
               <td>{{ key.name }}</td>
-              <td class="mono">{{ key.keyMasked }}</td>
+              <td class="mono">
+                <button
+                  type="button"
+                  class="key-copy"
+                  :disabled="copyingKeyId === key.id"
+                  title="复制完整密钥"
+                  :aria-label="`复制完整密钥 ${key.name}`"
+                  @click="copyKeyValue(key)"
+                >
+                  <svg class="key-copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2z" />
+                  </svg>
+                  <span>{{ key.keyMasked }}</span>
+                </button>
+              </td>
               <td>{{ key.modelScope === 'all' ? '全部' : key.supportedModels.join(', ') || '指定' }}</td>
               <td>{{ keyPolicySummary(key) }}</td>
               <td>{{ key.usedRequests }} / {{ key.maxRequests ?? '不限' }}</td>
@@ -527,6 +559,28 @@ onMounted(loadKeys);
 .option-item span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.key-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.key-copy:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.key-copy-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
 }
 
 @media (max-width: 900px) {

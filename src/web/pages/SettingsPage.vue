@@ -61,7 +61,7 @@ const rows = computed(() => {
     {
       label: '最大通道尝试',
       value: `${settings.value.proxyMaxChannelAttempts} 次`,
-      note: '由 PROXY_MAX_CHANNEL_ATTEMPTS 控制。'
+      note: '单个请求最多尝试的不同通道数；流式请求仅在首字节前允许切换。'
     },
     {
       label: '默认调用策略',
@@ -335,7 +335,7 @@ onMounted(loadSettings);
             </tr>
             <tr>
               <td class="mono">PROXY_MAX_CHANNEL_ATTEMPTS</td>
-              <td>单次请求最多尝试通道数。</td>
+              <td>单个请求最多尝试的不同通道数；流式请求仅在首字节前允许切换。</td>
               <td>{{ settings?.proxyMaxChannelAttempts || '-' }}</td>
             </tr>
             <tr>
