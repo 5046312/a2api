@@ -25,6 +25,7 @@ import { monitorRoutes } from './routes/api/monitor.js';
 import { oauthRoutes } from './routes/api/oauth.js';
 import { clientConfigRoutes } from './routes/api/clientConfigs.js';
 import { proxyRoutes } from './routes/proxy/router.js';
+import { startAccountMonitorScheduler } from './services/accountMonitorScheduler.js';
 import { startBalanceRefreshScheduler } from './services/balanceScheduler.js';
 import { startBackupWebdavScheduler } from './services/backupWebdavService.js';
 import { startProxyLogRetentionScheduler } from './services/proxyLogRetentionService.js';
@@ -33,6 +34,7 @@ import { hydrateRuntimeSettings } from './services/settingsService.js';
 runMigrations();
 hydrateRuntimeSettings();
 startBalanceRefreshScheduler();
+startAccountMonitorScheduler();
 startProxyLogRetentionScheduler();
 startBackupWebdavScheduler();
 

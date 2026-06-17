@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
+import { useDialog } from 'naive-ui';
 import { api, type Account, type AccountToken, type CredentialRef, type DownstreamKey, type DownstreamKeyBatchAction, type RouteItem, type Site } from '@web/api';
 
 const keys = ref<DownstreamKey[]>([]);
@@ -14,6 +15,11 @@ const error = ref('');
 const message = ref('');
 const createdKey = ref('');
 const editingKeyId = ref<number | null>(null);
+const dialog = useDialog();
+const modelScopeOptions = [
+  { label: '全部模型', value: 'all' },
+  { label: '指定模型', value: 'selected' }
+];
 
 type DownstreamKeyForm = {
   name: string;
@@ -113,7 +119,7 @@ function accountById(accountId: number) {
 }
 
 function credentialRefs(accountIds: number[], tokenIds: number[]): CredentialRef[] {
-  // 账号和 Token 授权统一转换为后端 CredentialRef 结构。
+  // 账号和内部凭据授权统一转换为后端 CredentialRef 结构。
   const refs: CredentialRef[] = [];
   for (const accountId of accountIds) {
     const account = accountById(accountId);
@@ -150,7 +156,7 @@ function siteWeightMultipliers() {
 
 function keyPolicySummary(key: DownstreamKey) {
   const parts = [
-    key.allowedSiteIds.length > 0 ? `站点 ${key.allowedSiteIds.length}` : '',
+    key.allowedSiteIds.length > 0 ? `上游 ${key.allowedSiteIds.length}` : '',
     key.allowedCredentialRefs.length > 0 ? `凭据 ${key.allowedCredentialRefs.length}` : '',
     key.allowedRouteIds.length > 0 ? `路由 ${key.allowedRouteIds.length}` : '',
     key.excludedSiteIds.length > 0 || key.excludedCredentialRefs.length > 0 ? '含排除' : ''
@@ -192,6 +198,12 @@ function toggleAllVisibleKeys() {
   } else {
     selectedKeyIds.value = selectedKeyIds.value.filter((id) => !visibleIds.includes(id));
   }
+}
+
+function updateNumberSelection(list: number[], value: number, checked: boolean) {
+  const index = list.indexOf(value);
+  if (checked && index === -1) list.push(value);
+  if (!checked && index !== -1) list.splice(index, 1);
 }
 
 function buildPayload() {
@@ -301,49 +313,62 @@ async function toggleKey(key: DownstreamKey) {
   }
 }
 
-async function resetUsage(key: DownstreamKey) {
-  if (!window.confirm(`清零密钥 ${key.name} 的请求量和费用？`)) return;
-  error.value = '';
-  message.value = '';
-  try {
-    await api.resetDownstreamKeyUsage(key.id);
-    message.value = '密钥用量已清零';
-    await loadKeys();
-  } catch (err) {
-    setError(err, '清零密钥用量失败');
-  }
+function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
+  dialog.warning({
+    title: '确认操作',
+    content,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick
+  });
+}
+
+function resetUsage(key: DownstreamKey) {
+  confirmAction(`清零密钥 ${key.name} 的请求量和费用？`, async () => {
+    error.value = '';
+    message.value = '';
+    try {
+      await api.resetDownstreamKeyUsage(key.id);
+      message.value = '密钥用量已清零';
+      await loadKeys();
+    } catch (err) {
+      setError(err, '清零密钥用量失败');
+    }
+  });
 }
 
 async function batchUpdateKeys(action: DownstreamKeyBatchAction) {
   const ids = selectedKeyIds.value.slice();
   if (ids.length === 0) return;
-  if (!window.confirm(`批量${batchKeyActionLabel(action)} ${ids.length} 个密钥？`)) return;
-  saving.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.batchUpdateDownstreamKeys(ids, action);
-    selectedKeyIds.value = [];
-    message.value = `批量${batchKeyActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
-    await loadKeys();
-  } catch (err) {
-    setError(err, '批量更新下游密钥失败');
-  } finally {
-    saving.value = false;
-  }
+  confirmAction(`批量${batchKeyActionLabel(action)} ${ids.length} 个密钥？`, async () => {
+    saving.value = true;
+    error.value = '';
+    message.value = '';
+    try {
+      const result = await api.batchUpdateDownstreamKeys(ids, action);
+      selectedKeyIds.value = [];
+      message.value = `批量${batchKeyActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
+      await loadKeys();
+    } catch (err) {
+      setError(err, '批量更新下游密钥失败');
+    } finally {
+      saving.value = false;
+    }
+  });
 }
 
-async function removeKey(key: DownstreamKey) {
-  if (!window.confirm(`删除密钥 ${key.name}？`)) return;
-  error.value = '';
-  message.value = '';
-  try {
-    await api.deleteDownstreamKey(key.id);
-    message.value = '密钥已删除';
-    await loadKeys();
-  } catch (err) {
-    setError(err, '删除下游密钥失败');
-  }
+function removeKey(key: DownstreamKey) {
+  confirmAction(`删除密钥 ${key.name}？`, async () => {
+    error.value = '';
+    message.value = '';
+    try {
+      await api.deleteDownstreamKey(key.id);
+      message.value = '密钥已删除';
+      await loadKeys();
+    } catch (err) {
+      setError(err, '删除下游密钥失败');
+    }
+  });
 }
 
 onMounted(loadKeys);
@@ -351,7 +376,7 @@ onMounted(loadKeys);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>{{ editingKeyId ? '编辑下游密钥' : '下游密钥' }}</h2>
@@ -361,142 +386,166 @@ onMounted(loadKeys);
       <form class="form-grid" @submit.prevent="submit">
         <label class="field">
           <span>名称</span>
-          <input v-model="form.name" class="input" required />
+          <n-input v-model:value="form.name" required />
         </label>
         <label class="field">
           <span>模型范围</span>
-          <select v-model="form.modelScope" class="select">
-            <option value="all">全部模型</option>
-            <option value="selected">指定模型</option>
-          </select>
+          <n-select v-model:value="form.modelScope" :options="modelScopeOptions" />
         </label>
         <label class="field">
           <span>最大请求数</span>
-          <input v-model="form.maxRequests" class="input" min="1" type="number" placeholder="不限" />
+          <n-input v-model:value="form.maxRequests" placeholder="不限" />
         </label>
         <label class="field">
           <span>费用上限</span>
-          <input v-model="form.maxCost" class="input" min="0" step="0.01" type="number" placeholder="不限" />
+          <n-input v-model:value="form.maxCost" placeholder="不限" />
         </label>
         <label class="field">
           <span>过期时间</span>
-          <input v-model="form.expiresAt" class="input" type="datetime-local" />
+          <input class="native-input" v-model="form.expiresAt" type="datetime-local" />
         </label>
         <label class="check-row option-item">
-          <input v-model="form.enabled" type="checkbox" />
-          <span>创建后启用</span>
+          <n-checkbox v-model:checked="form.enabled">创建后启用</n-checkbox>
         </label>
         <label class="field wide">
           <span>说明</span>
-          <input v-model="form.description" class="input" placeholder="可选" />
+          <n-input v-model:value="form.description" placeholder="可选" />
         </label>
         <label class="field wide">
           <span>指定模型</span>
-          <textarea v-model="form.supportedModelsText" class="textarea" rows="4" placeholder="每行一个模型"></textarea>
+          <n-input type="textarea" v-model:value="form.supportedModelsText" :rows="4" placeholder="每行一个模型"></n-input>
         </label>
         <div class="field wide">
           <span>允许路由</span>
           <div class="option-grid">
             <label v-for="route in routes" :key="route.id" class="check-row option-item">
-              <input v-model="form.allowedRouteIds" type="checkbox" :value="route.id" />
-              <span>{{ route.displayName || route.modelPattern }}</span>
+              <n-checkbox
+                :checked="form.allowedRouteIds.includes(route.id)"
+                @update:checked="(checked) => updateNumberSelection(form.allowedRouteIds, route.id, checked)"
+              >
+                {{ route.displayName || route.modelPattern }}
+              </n-checkbox>
             </label>
             <p v-if="routes.length === 0" class="muted">暂无路由</p>
           </div>
         </div>
         <div class="field wide">
-          <span>允许站点</span>
+          <span>允许上游地址</span>
           <div class="option-grid">
             <label v-for="site in sites" :key="site.id" class="check-row option-item">
-              <input v-model="form.allowedSiteIds" type="checkbox" :value="site.id" />
-              <span>{{ site.name }}</span>
+              <n-checkbox
+                :checked="form.allowedSiteIds.includes(site.id)"
+                @update:checked="(checked) => updateNumberSelection(form.allowedSiteIds, site.id, checked)"
+              >
+                {{ site.name }}
+              </n-checkbox>
             </label>
-            <p v-if="sites.length === 0" class="muted">暂无站点</p>
+            <p v-if="sites.length === 0" class="muted">暂无上游地址</p>
           </div>
         </div>
         <div class="field wide">
           <span>允许账号</span>
           <div class="option-grid">
             <label v-for="account in accounts" :key="account.id" class="check-row option-item">
-              <input v-model="form.allowedAccountIds" type="checkbox" :value="account.id" />
-              <span>{{ accountLabel(account) }}</span>
+              <n-checkbox
+                :checked="form.allowedAccountIds.includes(account.id)"
+                @update:checked="(checked) => updateNumberSelection(form.allowedAccountIds, account.id, checked)"
+              >
+                {{ accountLabel(account) }}
+              </n-checkbox>
             </label>
             <p v-if="accounts.length === 0" class="muted">暂无账号</p>
           </div>
         </div>
         <div class="field wide">
-          <span>允许 Token</span>
+          <span>允许凭据</span>
           <div class="option-grid">
             <label v-for="token in tokens" :key="token.id" class="check-row option-item">
-              <input v-model="form.allowedTokenIds" type="checkbox" :value="token.id" />
-              <span>{{ tokenLabel(token) }}</span>
+              <n-checkbox
+                :checked="form.allowedTokenIds.includes(token.id)"
+                @update:checked="(checked) => updateNumberSelection(form.allowedTokenIds, token.id, checked)"
+              >
+                {{ tokenLabel(token) }}
+              </n-checkbox>
             </label>
-            <p v-if="tokens.length === 0" class="muted">暂无 Token</p>
+            <p v-if="tokens.length === 0" class="muted">暂无凭据</p>
           </div>
         </div>
         <div class="field wide">
-          <span>排除站点</span>
+          <span>排除上游地址</span>
           <div class="option-grid">
             <label v-for="site in sites" :key="site.id" class="check-row option-item">
-              <input v-model="form.excludedSiteIds" type="checkbox" :value="site.id" />
-              <span>{{ site.name }}</span>
+              <n-checkbox
+                :checked="form.excludedSiteIds.includes(site.id)"
+                @update:checked="(checked) => updateNumberSelection(form.excludedSiteIds, site.id, checked)"
+              >
+                {{ site.name }}
+              </n-checkbox>
             </label>
-            <p v-if="sites.length === 0" class="muted">暂无站点</p>
+            <p v-if="sites.length === 0" class="muted">暂无上游地址</p>
           </div>
         </div>
         <div class="field wide">
-          <span>排除账号 / Token</span>
+          <span>排除账号 / 凭据</span>
           <div class="option-grid">
             <label v-for="account in accounts" :key="account.id" class="check-row option-item">
-              <input v-model="form.excludedAccountIds" type="checkbox" :value="account.id" />
-              <span>{{ accountLabel(account) }}</span>
+              <n-checkbox
+                :checked="form.excludedAccountIds.includes(account.id)"
+                @update:checked="(checked) => updateNumberSelection(form.excludedAccountIds, account.id, checked)"
+              >
+                {{ accountLabel(account) }}
+              </n-checkbox>
             </label>
             <label v-for="token in tokens" :key="`token-${token.id}`" class="check-row option-item">
-              <input v-model="form.excludedTokenIds" type="checkbox" :value="token.id" />
-              <span>{{ tokenLabel(token) }}</span>
+              <n-checkbox
+                :checked="form.excludedTokenIds.includes(token.id)"
+                @update:checked="(checked) => updateNumberSelection(form.excludedTokenIds, token.id, checked)"
+              >
+                {{ tokenLabel(token) }}
+              </n-checkbox>
             </label>
             <p v-if="accounts.length === 0 && tokens.length === 0" class="muted">暂无凭据</p>
           </div>
         </div>
         <div class="field wide">
-          <span>站点权重倍率</span>
+          <span>上游权重倍率</span>
           <div class="weight-grid">
             <label v-for="site in sites" :key="site.id" class="field compact-field">
               <span>{{ site.name }}</span>
-              <input v-model="form.siteWeightInputs[String(site.id)]" class="input" min="0.01" step="0.1" type="number" placeholder="1" />
+              <n-input v-model:value="form.siteWeightInputs[String(site.id)]" placeholder="1" />
             </label>
           </div>
         </div>
         <div class="form-actions wide">
-          <button class="btn btn-primary" type="submit" :disabled="saving">
+          <n-button type="primary" attr-type="submit" :disabled="saving">
             {{ saving ? '保存中' : editingKeyId ? '保存修改' : '创建密钥' }}
-          </button>
-          <button v-if="editingKeyId" class="btn btn-secondary" type="button" @click="resetForm">取消编辑</button>
+          </n-button>
+          <n-button secondary v-if="editingKeyId" attr-type="button" @click="resetForm">取消编辑</n-button>
         </div>
       </form>
-      <p v-if="createdKey" class="notice mono">新密钥：{{ createdKey }}</p>
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-    </div>
+      <n-alert v-if="createdKey" type="success" :bordered="false" class="mono">新密钥：{{ createdKey }}</n-alert>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <h2>密钥列表</h2>
-        <button class="btn btn-secondary" type="button" @click="loadKeys">刷新</button>
+        <n-button secondary attr-type="button" @click="loadKeys">刷新</n-button>
       </div>
       <div class="toolbar">
-        <button class="btn btn-secondary" type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('enable')">批量启用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('disable')">批量停用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('resetUsage')">批量清用量</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('delete')">批量删除</button>
+        <n-button secondary attr-type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('enable')">批量启用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('disable')">批量停用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('resetUsage')">批量清用量</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedKeyIds.length === 0 || saving" @click="batchUpdateKeys('delete')">批量删除</n-button>
         <span class="muted">已选 {{ selectedKeyIds.length }}</span>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>
-                <input type="checkbox" :checked="allVisibleKeysSelected()" :disabled="keys.length === 0" @change="toggleAllVisibleKeys" />
+                <n-checkbox :checked="allVisibleKeysSelected()" :disabled="keys.length === 0" @update:checked="toggleAllVisibleKeys" />
               </th>
               <th>名称</th>
               <th>密钥</th>
@@ -514,7 +563,7 @@ onMounted(loadKeys);
           <tbody>
             <tr v-for="key in keys" :key="key.id" :class="{ selected: isKeySelected(key.id) }">
               <td>
-                <input type="checkbox" :checked="isKeySelected(key.id)" @change="toggleKeySelection(key.id)" />
+                <n-checkbox :checked="isKeySelected(key.id)" @update:checked="toggleKeySelection(key.id)" />
               </td>
               <td>{{ key.name }}</td>
               <td class="mono">{{ key.keyMasked }}</td>
@@ -525,21 +574,23 @@ onMounted(loadKeys);
               <td>{{ key.usedCost }} / {{ key.maxCost ?? '不限' }}</td>
               <td>{{ formatTime(key.expiresAt) }}</td>
               <td>{{ formatTime(key.lastUsedAt) }}</td>
-              <td><span class="badge" :class="key.enabled ? 'active' : 'disabled'">{{ key.enabled ? '启用' : '停用' }}</span></td>
+              <td>
+                <n-tag size="small" :type="key.enabled ? 'success' : 'error'">{{ key.enabled ? '启用' : '停用' }}</n-tag>
+              </td>
               <td class="actions">
-                <button class="text-btn" type="button" @click="editKey(key)">编辑</button>
-                <button class="text-btn" type="button" @click="toggleKey(key)">{{ key.enabled ? '停用' : '启用' }}</button>
-                <button class="text-btn" type="button" @click="resetUsage(key)">清用量</button>
-                <button class="text-btn danger" type="button" @click="removeKey(key)">删除</button>
+                <n-button text attr-type="button" @click="editKey(key)">编辑</n-button>
+                <n-button text attr-type="button" @click="toggleKey(key)">{{ key.enabled ? '停用' : '启用' }}</n-button>
+                <n-button text attr-type="button" @click="resetUsage(key)">清用量</n-button>
+                <n-button type="error" text attr-type="button" @click="removeKey(key)">删除</n-button>
               </td>
             </tr>
             <tr v-if="!loading && keys.length === 0">
               <td class="empty" colspan="12">暂无密钥</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>
 

@@ -9,6 +9,13 @@ const loading = ref(false);
 const error = ref('');
 const keyword = ref('');
 const sortKey = ref<SortKey>('accountCount');
+const sortOptions = [
+  { label: '按账号数', value: 'accountCount' },
+  { label: '按凭据数', value: 'tokenCount' },
+  { label: '按成功率', value: 'successRate' },
+  { label: '按延迟', value: 'avgLatencyMs' },
+  { label: '按成本', value: 'minCost' }
+];
 
 const filteredModels = computed(() => {
   const text = keyword.value.trim().toLowerCase();
@@ -26,7 +33,7 @@ const summaryCards = computed(() => {
   return [
     { label: '模型数', value: formatInteger(modelCount) },
     { label: '覆盖账号', value: formatInteger(accountCount) },
-    { label: 'Token 数', value: formatInteger(tokenCount) },
+    { label: '凭据数', value: formatInteger(tokenCount) },
     { label: '平均成功率', value: formatPercent(averageSuccessRate) }
   ];
 });
@@ -54,6 +61,12 @@ function formatLatency(value: number) {
   return value > 0 ? `${Math.round(value)}ms` : '-';
 }
 
+function successRateTagType(value: number) {
+  if (value >= 0.95) return 'success';
+  if (value > 0) return 'warning';
+  return 'error';
+}
+
 async function loadModels() {
   loading.value = true;
   error.value = '';
@@ -72,26 +85,26 @@ onMounted(loadModels);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>模型广场</h2>
-          <p class="muted">按活跃站点、账号、Token 和最近代理日志聚合。</p>
+          <p class="muted">按活跃上游、账号、内部凭据和最近代理日志聚合。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="loading" @click="loadModels">
+        <n-button secondary attr-type="button" :disabled="loading" @click="loadModels">
           {{ loading ? '刷新中' : '刷新' }}
-        </button>
+        </n-button>
       </div>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="stats-grid">
         <div v-for="card in summaryCards" :key="card.label" class="stat-card">
           <span class="stat-label">{{ card.label }}</span>
           <strong class="stat-value">{{ card.value }}</strong>
         </div>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>模型覆盖</h2>
@@ -99,24 +112,18 @@ onMounted(loadModels);
         </div>
       </div>
       <div class="toolbar">
-        <input v-model="keyword" class="input" placeholder="搜索模型" />
-        <select v-model="sortKey" class="select">
-          <option value="accountCount">按账号数</option>
-          <option value="tokenCount">按 Token 数</option>
-          <option value="successRate">按成功率</option>
-          <option value="avgLatencyMs">按延迟</option>
-          <option value="minCost">按成本</option>
-        </select>
+        <n-input v-model:value="keyword" placeholder="搜索模型" />
+        <n-select v-model:value="sortKey" :options="sortOptions" class="toolbar-select" />
         <span class="muted">匹配 {{ filteredModels.length }} / {{ models.length }}</span>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>模型</th>
-              <th>站点</th>
+              <th>上游地址</th>
               <th>账号</th>
-              <th>Token</th>
+              <th>凭据</th>
               <th>最低成本</th>
               <th>平均延迟</th>
               <th>成功率</th>
@@ -131,17 +138,17 @@ onMounted(loadModels);
               <td class="mono">{{ formatCost(item.minCost) }}</td>
               <td class="mono">{{ formatLatency(item.avgLatencyMs) }}</td>
               <td>
-                <span class="badge" :class="item.successRate >= 0.95 ? 'success' : item.successRate > 0 ? 'retried' : 'disabled'">
+                <n-tag size="small" :type="successRateTagType(item.successRate)">
                   {{ item.successRate > 0 ? formatPercent(item.successRate) : '-' }}
-                </span>
+                </n-tag>
               </td>
             </tr>
             <tr v-if="!loading && filteredModels.length === 0">
               <td class="empty" colspan="7">暂无模型数据</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

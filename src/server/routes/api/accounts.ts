@@ -11,12 +11,15 @@ import {
   verifyAccountToken
 } from '../../services/accountService.js';
 import { refreshAccountBalance, refreshAllAccountBalances } from '../../services/balanceService.js';
-import { refreshAccountModels } from '../../services/modelDiscoveryService.js';
+import { listAccountModels, refreshAccountModels, updateAccountModels } from '../../services/modelDiscoveryService.js';
 import { rebuildRoutes } from '../../services/routeRefreshService.js';
 import { sendError } from '../../shared/errors.js';
 import { compactObject } from '../../shared/object.js';
 
 const idParamsSchema = z.object({ id: z.coerce.number().int().positive() });
+const accountModelsPayloadSchema = z.object({
+  models: z.array(z.string().trim()).default([])
+});
 const listQuerySchema = z.object({
   siteId: z.coerce.number().int().optional(),
   status: z.string().optional(),
@@ -29,13 +32,29 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/accounts/verify-token', async (request, reply) => {
     const parsed = z.object({
-      siteId: z.number().int().positive(),
-      token: z.string().min(1),
+      siteId: z.number().int().positive().optional(),
+      baseUrl: z.string().trim().url().optional(),
+      platform: z.string().trim().optional(),
+      proxyUrl: z.string().trim().optional().nullable(),
+      customHeaders: z.record(z.string(), z.string()).optional().nullable(),
+      token: z.string().optional(),
+      apiKey: z.string().optional(),
       credentialMode: z.enum(['auto', 'session', 'apikey', 'oauth']).default('apikey')
     }).safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    const token = parsed.data.token || parsed.data.apiKey || '';
+    if (!token) return sendError(reply, 400, 'validation_error', 'API Key is required', 'missing_token');
     try {
-      const result = await verifyAccountToken(parsed.data);
+      const verifyPayload: Parameters<typeof verifyAccountToken>[0] = {
+        token,
+        credentialMode: parsed.data.credentialMode
+      };
+      if (parsed.data.siteId !== undefined) verifyPayload.siteId = parsed.data.siteId;
+      if (parsed.data.baseUrl !== undefined) verifyPayload.baseUrl = parsed.data.baseUrl;
+      if (parsed.data.platform !== undefined) verifyPayload.platform = parsed.data.platform;
+      if (parsed.data.proxyUrl !== undefined) verifyPayload.proxyUrl = parsed.data.proxyUrl;
+      if (parsed.data.customHeaders !== undefined) verifyPayload.customHeaders = parsed.data.customHeaders;
+      const result = await verifyAccountToken(verifyPayload);
       return { ok: result.tokenType === 'apikey', ...result };
     } catch (error) {
       return sendError(reply, 400, 'validation_error', error instanceof Error ? error.message : 'Verify token failed', 'verify_failed');
@@ -45,6 +64,9 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/accounts', async (request, reply) => {
     const parsed = accountPayloadSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    if (!parsed.data.siteId && !parsed.data.baseUrl) {
+      return sendError(reply, 400, 'validation_error', 'siteId or baseUrl is required', 'missing_upstream');
+    }
     const account = await createAccount(parsed.data);
     return account;
   });
@@ -84,6 +106,28 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       return await refreshAccountBalance(params.id);
     } catch (error) {
       return sendError(reply, 400, 'validation_error', error instanceof Error ? error.message : 'Refresh balance failed', 'balance_refresh_failed');
+    }
+  });
+
+  app.get('/api/accounts/:id/models', async (request, reply) => {
+    const params = idParamsSchema.parse(request.params);
+    try {
+      return await listAccountModels(params.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'List account models failed';
+      return sendError(reply, message === 'Account not found' ? 404 : 400, 'validation_error', message, 'list_models_failed');
+    }
+  });
+
+  app.put('/api/accounts/:id/models', async (request, reply) => {
+    const params = idParamsSchema.parse(request.params);
+    const parsed = accountModelsPayloadSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    try {
+      return await updateAccountModels(params.id, parsed.data.models);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Update account models failed';
+      return sendError(reply, message === 'Account not found' ? 404 : 400, 'validation_error', message, 'update_models_failed');
     }
   });
 

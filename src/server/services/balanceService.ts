@@ -4,6 +4,7 @@ import type { BalanceInfo } from '../adapters/types.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
+import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
 type AccountBalanceRow = typeof schema.accounts.$inferSelect & {
   siteName: string;
@@ -45,12 +46,13 @@ export async function refreshAccountBalance(accountId: number): Promise<BalanceR
   }
 
   try {
+    const credential = await resolveDefaultAccountCredential(account.id, { apiToken: account.apiToken });
     const balance = await adapter.getBalance({
       siteId: account.siteId,
       baseUrl: account.siteUrl,
       platform: account.sitePlatform as SitePlatform,
       accessToken: account.accessToken,
-      apiToken: account.apiToken,
+      apiToken: credential?.token ?? null,
       proxyUrl: accountProxyUrl(account.extraConfig) || account.siteProxyUrl,
       customHeaders: parseJsonObject(account.siteCustomHeaders) as Record<string, string> | null
     });

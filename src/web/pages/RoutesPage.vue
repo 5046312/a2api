@@ -150,21 +150,21 @@ onMounted(loadRoutes);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>模型路由</h2>
           <p class="muted">根据账号模型生成可用路由和通道。</p>
         </div>
         <div class="actions">
-          <button class="btn btn-secondary" type="button" @click="loadRoutes">刷新</button>
-          <button class="btn btn-primary" type="button" @click="rebuild">重建路由</button>
+          <n-button secondary attr-type="button" @click="loadRoutes">刷新</n-button>
+          <n-button type="primary" attr-type="button" @click="rebuild">重建路由</n-button>
         </div>
       </div>
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>模型</th>
@@ -185,49 +185,51 @@ onMounted(loadRoutes);
               <td>{{ route.routingStrategy }}</td>
               <td>{{ route.channelCount }}</td>
               <td>{{ route.successCount }} / {{ route.failCount }}</td>
-              <td><span class="badge" :class="route.enabled ? 'active' : 'disabled'">{{ route.enabled ? '启用' : '停用' }}</span></td>
+              <td>
+                <n-tag size="small" :type="route.enabled ? 'success' : 'error'">{{ route.enabled ? '启用' : '停用' }}</n-tag>
+              </td>
               <td class="actions">
-                <button class="text-btn" type="button" @click="selectRoute(route)">通道</button>
-                <button class="text-btn" type="button" @click="selectRoute(route).then(() => explainRoute(route))">解释</button>
-                <button class="text-btn" type="button" @click="toggleRoute(route)">
+                <n-button text attr-type="button" @click="selectRoute(route)">通道</n-button>
+                <n-button text attr-type="button" @click="selectRoute(route).then(() => explainRoute(route))">解释</n-button>
+                <n-button text attr-type="button" @click="toggleRoute(route)">
                   {{ route.enabled ? '停用' : '启用' }}
-                </button>
-                <button class="text-btn" type="button" @click="clearCooldown(route)">清冷却</button>
+                </n-button>
+                <n-button text attr-type="button" @click="clearCooldown(route)">清冷却</n-button>
               </td>
             </tr>
             <tr v-if="!loading && routes.length === 0">
               <td class="empty" colspan="8">暂无路由</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
       <div v-if="routeSummaries.length > 0" class="model-list">
         <span v-for="summary in routeSummaries.slice(0, 8)" :key="summary.id" class="chip">
           {{ summary.displayName || summary.modelPattern }}：{{ summary.enabledChannelCount }}/{{ summary.channelCount }}
         </span>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>路由通道</h2>
           <p class="muted">{{ selectedRoute ? selectedRoute.modelPattern : '选择路由后查看通道' }}</p>
         </div>
         <div class="actions">
-          <input v-model="decisionModel" class="input" placeholder="请求模型" />
-          <button class="btn btn-secondary" type="button" :disabled="!selectedRoute" @click="explainRoute()">解释决策</button>
-          <button class="btn btn-secondary" type="button" :disabled="!selectedRoute" @click="refreshSnapshot()">刷新快照</button>
-          <button class="btn btn-secondary" type="button" :disabled="!selectedRoute" @click="loadSnapshot()">读取快照</button>
+          <n-input v-model:value="decisionModel" placeholder="请求模型" />
+          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainRoute()">解释决策</n-button>
+          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="refreshSnapshot()">刷新快照</n-button>
+          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="loadSnapshot()">读取快照</n-button>
         </div>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
-              <th>站点</th>
+              <th>上游地址</th>
               <th>账号</th>
-              <th>Token</th>
+              <th>凭据</th>
               <th>来源模型</th>
               <th>优先级</th>
               <th>权重</th>
@@ -250,11 +252,11 @@ onMounted(loadRoutes);
               <td class="empty" colspan="8">暂无通道</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>路由分组与快照</h2>
@@ -263,10 +265,10 @@ onMounted(loadRoutes);
       </div>
       <label class="field">
         <span>来源路由 ID</span>
-        <input v-model="groupSourceIdsText" class="input" placeholder="例如：1,2,3" />
+        <n-input v-model:value="groupSourceIdsText" placeholder="例如：1,2,3" />
       </label>
       <div class="actions">
-        <button class="btn btn-secondary" type="button" :disabled="!selectedRoute" @click="saveGroupSources()">保存分组来源</button>
+        <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="saveGroupSources()">保存分组来源</n-button>
       </div>
       <div v-if="groupSources.length > 0" class="model-list">
         <span v-for="source in groupSources" :key="source.id" class="chip">
@@ -274,9 +276,9 @@ onMounted(loadRoutes);
         </span>
       </div>
       <pre v-if="snapshot" class="code-block">{{ JSON.stringify(snapshot.snapshot, null, 2) }}</pre>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>决策解释</h2>
@@ -286,13 +288,13 @@ onMounted(loadRoutes);
       <div v-if="decision" class="page-stack">
         <p class="muted">{{ decision.summary.join('；') }}</p>
         <div class="table-wrap">
-          <table class="data-table">
+          <n-table size="small" :bordered="false" single-line class="admin-table">
             <thead>
               <tr>
                 <th>通道</th>
-                <th>站点</th>
+                <th>上游地址</th>
                 <th>账号</th>
-                <th>Token</th>
+                <th>凭据</th>
                 <th>优先级</th>
                 <th>权重</th>
                 <th>分数</th>
@@ -311,16 +313,20 @@ onMounted(loadRoutes);
                 <td>{{ candidate.weight }}</td>
                 <td>{{ candidate.score.toFixed(4) }}</td>
                 <td>{{ (candidate.probability * 100).toFixed(1) }}%</td>
-                <td><span class="badge" :class="candidate.available ? 'active' : 'failed'">{{ candidate.available ? '可用' : '过滤' }}</span></td>
+                <td>
+                  <n-tag size="small" :type="candidate.available ? 'success' : 'error'">
+                    {{ candidate.available ? '可用' : '过滤' }}
+                  </n-tag>
+                </td>
                 <td>{{ candidate.reasons.join('，') }}</td>
               </tr>
               <tr v-if="decision.candidates.length === 0">
                 <td class="empty" colspan="10">暂无候选</td>
               </tr>
             </tbody>
-          </table>
+          </n-table>
         </div>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

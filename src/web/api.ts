@@ -62,6 +62,11 @@ export type Account = {
   id: number;
   siteId: number;
   siteName: string | null;
+  name: string | null;
+  baseUrl: string | null;
+  platform: string | null;
+  customHeaders: Record<string, unknown> | null;
+  useSystemProxy: boolean;
   username: string | null;
   credentialMode: string;
   status: string;
@@ -72,9 +77,22 @@ export type Account = {
   quota: number;
   unitCost: number | null;
   lastBalanceRefresh: string | null;
+  apiKeyMasked: string;
   apiTokenMasked: string;
   proxyUrl: string | null;
   extraConfig: Record<string, unknown> | null;
+  modelCount: number;
+};
+
+export type AccountModels = {
+  accountId: number;
+  models: string[];
+};
+
+export type AccountModelsUpdateResult = AccountModels & {
+  created: number;
+  updated: number;
+  routeRebuilt: boolean;
 };
 
 export type AccountBatchAction = 'enable' | 'disable' | 'delete' | 'refreshBalance';
@@ -454,6 +472,7 @@ export type ClearUsageDataResult = {
   deletedProxyLogs: number;
   deletedProxyDebugTraces: number;
   deletedProxyDebugAttempts: number;
+  deletedMonitorHeartbeats: number;
   resetRouteChannels: number;
   resetAccounts: number;
   resetDownstreamKeys: number;
@@ -466,9 +485,79 @@ export type FactoryResetResult = {
   deleted: Record<string, number>;
 };
 
-export type MonitorConfig = {
-  ldohCookieConfigured: boolean;
-  ldohCookieMasked: string;
+export type MonitorStatus = 'up' | 'down' | 'pending' | 'maintenance';
+
+export type MonitorSettings = {
+  enabled: boolean;
+  intervalSec: number;
+  timeoutSec: number;
+  maxRetries: number;
+  concurrency: number;
+  retentionDays: number;
+  notifyOnDown: boolean;
+  notifyOnRecovery: boolean;
+};
+
+export type MonitorHeartbeat = {
+  id: number;
+  monitorId: number;
+  accountId: number;
+  status: MonitorStatus;
+  checkedAt: string;
+  latencyMs: number | null;
+  message: string | null;
+  retries: number;
+  important: boolean;
+  errorType: string | null;
+  modelCount: number | null;
+};
+
+export type MonitorAccount = {
+  id: number;
+  accountId: number;
+  accountName: string;
+  accountStatus: string;
+  siteId: number;
+  siteName: string;
+  siteUrl: string;
+  sitePlatform: string;
+  siteStatus: string;
+  enabled: boolean;
+  active: boolean;
+  intervalSec: number | null;
+  status: MonitorStatus;
+  lastCheckAt: string | null;
+  lastUpAt: string | null;
+  lastDownAt: string | null;
+  nextCheckAt: string | null;
+  consecutiveFailCount: number;
+  consecutiveSuccessCount: number;
+  latencyMs: number | null;
+  lastMessage: string | null;
+  uptime24h: number | null;
+  uptime7d: number | null;
+  heartbeats: MonitorHeartbeat[];
+  events?: MonitorHeartbeat[];
+};
+
+export type MonitorOverview = {
+  settings: MonitorSettings;
+  totalAccounts: number;
+  enabledAccounts: number;
+  disabledAccounts: number;
+  statusCount: Record<MonitorStatus, number>;
+  averageLatencyMs: number | null;
+  uptime24h: number | null;
+  uptime7d: number | null;
+  lastIncident: MonitorHeartbeat | null;
+};
+
+export type MonitorCheckAllResult = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  items: unknown[];
 };
 
 export type NotificationSettings = {
@@ -807,8 +896,12 @@ export const api = {
     apiRequest<BalanceRefreshResult>(`/api/accounts/${id}/balance`, { method: 'POST' }),
   refreshAllBalances: () =>
     apiRequest<BalanceRefreshAllResult>('/api/accounts/balance/refresh-all', { method: 'POST' }),
+  listAccountModels: (id: number) =>
+    apiRequest<AccountModels>(`/api/accounts/${id}/models`),
+  updateAccountModels: (id: number, models: string[]) =>
+    apiRequest<AccountModelsUpdateResult>(`/api/accounts/${id}/models`, { method: 'PUT', body: { models } }),
   refreshModels: (id: number) =>
-    apiRequest<{ created: number; updated: number; routeRebuilt: boolean }>(`/api/accounts/${id}/models/refresh`, {
+    apiRequest<{ accountId: number; created: number; updated: number; removed: number; routeRebuilt: boolean }>(`/api/accounts/${id}/models/refresh`, {
       method: 'POST'
     }),
   listTokens: (query: Record<string, QueryValue> = {}) =>
@@ -883,10 +976,23 @@ export const api = {
     apiRequest<ClearUsageDataResult>('/api/settings/maintenance/clear-usage', { method: 'POST' }),
   factoryReset: () =>
     apiRequest<FactoryResetResult>('/api/settings/maintenance/factory-reset', { method: 'POST' }),
-  getMonitorConfig: () => apiRequest<MonitorConfig>('/api/monitor/config'),
-  updateMonitorConfig: (body: { ldohCookie?: string | null }) =>
-    apiRequest<MonitorConfig & { ok: boolean; message: string }>('/api/monitor/config', { method: 'PUT', body }),
-  initMonitorSession: () => apiRequest<{ ok: boolean }>('/api/monitor/session', { method: 'POST' }),
+  getMonitorOverview: () => apiRequest<MonitorOverview>('/api/monitor/overview'),
+  listMonitorAccounts: (query: Record<string, QueryValue> = {}) =>
+    apiRequest<ListResponse<MonitorAccount>>(buildQuery('/api/monitor/accounts', query)),
+  getMonitorAccount: (accountId: number) =>
+    apiRequest<MonitorAccount>(`/api/monitor/accounts/${accountId}`),
+  checkMonitorAccount: (accountId: number) =>
+    apiRequest<{ accountId: number; status: MonitorStatus; checkedAt: string; latencyMs: number | null; message: string }>(
+      `/api/monitor/accounts/${accountId}/check`,
+      { method: 'POST' }
+    ),
+  checkAllMonitorAccounts: () => apiRequest<MonitorCheckAllResult>('/api/monitor/check-all', { method: 'POST' }),
+  updateMonitorAccount: (accountId: number, body: { enabled?: boolean; intervalSec?: number | null }) =>
+    apiRequest<MonitorAccount>(`/api/monitor/accounts/${accountId}`, { method: 'PATCH', body }),
+  getMonitorSettings: () => apiRequest<MonitorSettings>('/api/monitor/settings'),
+  updateMonitorSettings: (body: Partial<MonitorSettings>) =>
+    apiRequest<MonitorSettings>('/api/monitor/settings', { method: 'PUT', body }),
+  clearMonitorHeartbeats: () => apiRequest<{ deleted: number }>('/api/monitor/heartbeats', { method: 'DELETE' }),
   getNotificationSettings: () => apiRequest<NotificationSettings>('/api/settings/notifications'),
   updateNotificationSettings: (body: unknown) =>
     apiRequest<NotificationSettings>('/api/settings/notifications', { method: 'PUT', body }),

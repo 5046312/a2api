@@ -34,25 +34,28 @@ async function submit() {
 
 <template>
   <main class="login-screen">
-    <form class="login-panel" @submit.prevent="submit">
-      <div>
-        <p class="eyebrow">a2api</p>
-        <h1>管理后台</h1>
-        <p class="muted">输入服务端环境变量 <span class="mono">AUTH_TOKEN</span> 配置的管理 Token。</p>
-      </div>
-      <p class="notice">
-        配置位置：<span class="mono">a2api/.env</span> 或启动环境变量。未配置时开发默认值为
-        <span class="mono">change-me-admin-token</span>；复制 <span class="mono">.env.example</span> 后以其中的
-        <span class="mono">AUTH_TOKEN</span> 为准，生产环境必须修改。
-      </p>
-      <label class="field">
-        <span>管理 Token</span>
-        <input v-model="token" class="input" type="password" autocomplete="current-password" />
-      </label>
-      <p v-if="error" class="error">{{ error }}</p>
-      <button class="btn btn-primary" type="submit" :disabled="loading">
-        {{ loading ? '验证中' : '进入后台' }}
-      </button>
-    </form>
+    <n-card class="login-panel" :bordered="false">
+      <n-form @submit.prevent="submit">
+        <n-space vertical :size="16">
+          <div>
+            <p class="eyebrow">a2api</p>
+            <h1>管理后台</h1>
+            <p class="muted">输入服务端环境变量 <span class="mono">AUTH_TOKEN</span> 配置的管理 Token。</p>
+          </div>
+          <n-alert type="info" :bordered="false">
+            配置位置：<span class="mono">a2api/.env</span> 或启动环境变量。未配置时开发默认值为
+            <span class="mono">change-me-admin-token</span>；复制 <span class="mono">.env.example</span> 后以其中的
+            <span class="mono">AUTH_TOKEN</span> 为准，生产环境必须修改。
+          </n-alert>
+          <n-form-item label="管理 Token" :show-feedback="false">
+            <n-input v-model:value="token" type="password" autocomplete="current-password" show-password-on="mousedown" />
+          </n-form-item>
+          <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+          <n-button type="primary" attr-type="submit" :loading="loading" block>
+            进入后台
+          </n-button>
+        </n-space>
+      </n-form>
+    </n-card>
   </main>
 </template>

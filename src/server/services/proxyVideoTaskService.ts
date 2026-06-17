@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
+import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
 type SiteRow = typeof schema.sites.$inferSelect;
 
@@ -163,7 +164,14 @@ async function resolveAccountCredential(accountId: number): Promise<ProxyVideoTa
     .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(eq(schema.accounts.id, accountId))
     .get();
-  const token = row?.accountApiToken || row?.accountAccessToken || '';
+  const credential = row
+    ? await resolveDefaultAccountCredential(accountId, {
+      apiToken: row.accountApiToken,
+      accessToken: row.accountAccessToken,
+      includeAccessToken: true
+    })
+    : null;
+  const token = credential?.token || '';
   if (!row || !token || row.accountStatus !== 'active' || row.site.status !== 'active') return null;
   return {
     token,

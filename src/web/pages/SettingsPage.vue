@@ -9,6 +9,8 @@ const testingProxy = ref(false);
 const resetting = ref(false);
 const error = ref('');
 const message = ref('');
+const resetConfirmVisible = ref(false);
+const resetConfirmText = ref('');
 const form = reactive({
   systemProxyUrl: '',
   adminIpAllowlistText: '',
@@ -172,8 +174,15 @@ async function testNotifications() {
 }
 
 async function factoryReset() {
-  const confirmed = window.prompt('输入 RESET 确认重新初始化系统');
-  if (confirmed !== 'RESET') return;
+  resetConfirmText.value = '';
+  resetConfirmVisible.value = true;
+}
+
+async function confirmFactoryReset() {
+  if (resetConfirmText.value !== 'RESET') {
+    error.value = '请输入 RESET 确认重新初始化系统';
+    return;
+  }
   resetting.value = true;
   error.value = '';
   message.value = '';
@@ -185,6 +194,7 @@ async function factoryReset() {
     error.value = err instanceof Error ? err.message : '重新初始化系统失败';
   } finally {
     resetting.value = false;
+    resetConfirmVisible.value = false;
   }
 }
 
@@ -193,73 +203,71 @@ onMounted(loadSettings);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>运行设置</h2>
           <p class="muted">保存后写入数据库，并覆盖同名环境变量的运行时值。</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="loadSettings">刷新</button>
+        <n-button secondary attr-type="button" @click="loadSettings">刷新</n-button>
       </div>
       <form class="form-grid" @submit.prevent="saveSettings">
         <label class="field">
           <span>系统代理</span>
-          <input v-model="form.systemProxyUrl" class="input" placeholder="socks5://127.0.0.1:1080" />
+          <n-input v-model:value="form.systemProxyUrl" placeholder="socks5://127.0.0.1:1080" />
         </label>
         <label class="field">
           <span>首字节超时（秒）</span>
-          <input v-model.number="form.proxyFirstByteTimeoutSec" class="input" min="0" type="number" />
+          <n-input-number v-model:value="form.proxyFirstByteTimeoutSec" :min="0" />
         </label>
         <label class="field">
           <span>最大通道尝试</span>
-          <input v-model.number="form.proxyMaxChannelAttempts" class="input" min="1" max="20" type="number" />
+          <n-input-number v-model:value="form.proxyMaxChannelAttempts" :min="1" :max="20" />
         </label>
         <label class="field">
           <span>路由缓存 TTL（ms）</span>
-          <input v-model.number="form.tokenRouterCacheTtlMs" class="input" min="100" step="100" type="number" />
+          <n-input-number v-model:value="form.tokenRouterCacheTtlMs" :min="100" :step="100" />
         </label>
         <label class="field">
           <span>余额刷新 Cron</span>
-          <input v-model="form.balanceRefreshCron" class="input" placeholder="0 * * * *" />
+          <n-input v-model:value="form.balanceRefreshCron" placeholder="0 * * * *" />
         </label>
         <label class="field">
           <span>日志清理 Cron</span>
-          <input v-model="form.logCleanupCron" class="input" placeholder="0 6 * * *" />
+          <n-input v-model:value="form.logCleanupCron" placeholder="0 6 * * *" />
         </label>
         <label class="field">
           <span>日志保留天数</span>
-          <input v-model.number="form.logCleanupRetentionDays" class="input" min="1" type="number" />
+          <n-input-number v-model:value="form.logCleanupRetentionDays" :min="1" />
         </label>
         <label class="field wide">
           <span>管理端 IP 白名单</span>
-          <textarea v-model="form.adminIpAllowlistText" class="textarea" rows="4" placeholder="每行一个 IP，留空表示不限制"></textarea>
+          <n-input type="textarea" v-model:value="form.adminIpAllowlistText" :rows="4" placeholder="每行一个 IP，留空表示不限制"></n-input>
         </label>
         <label class="check-row wide">
-          <input v-model="form.notificationWebhookEnabled" type="checkbox" />
-          <span>启用 Webhook 通知</span>
+          <n-checkbox v-model:checked="form.notificationWebhookEnabled">启用 Webhook 通知</n-checkbox>
         </label>
         <label class="field wide">
           <span>Webhook URL</span>
-          <input v-model="form.notificationWebhookUrl" class="input" placeholder="留空保留已保存地址" />
+          <n-input v-model:value="form.notificationWebhookUrl" placeholder="留空保留已保存地址" />
         </label>
         <label class="check-row wide">
-          <input v-model="form.clearNotificationWebhookUrl" type="checkbox" />
-          <span>清空已保存 Webhook URL</span>
+          <n-checkbox v-model:checked="form.clearNotificationWebhookUrl">清空已保存 Webhook URL</n-checkbox>
         </label>
         <label class="field">
           <span>通知冷静期（秒）</span>
-          <input v-model.number="form.notifyCooldownSec" class="input" min="0" type="number" />
+          <n-input-number v-model:value="form.notifyCooldownSec" :min="0" />
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? '保存中' : '保存设置' }}</button>
-          <button class="btn btn-secondary" type="button" :disabled="testingProxy || saving" @click="testSystemProxy">
+          <n-button type="primary" attr-type="submit" :disabled="saving">{{ saving ? '保存中' : '保存设置' }}</n-button>
+          <n-button secondary attr-type="button" :disabled="testingProxy || saving" @click="testSystemProxy">
             {{ testingProxy ? '测试中' : '测试系统代理' }}
-          </button>
-          <button class="btn btn-secondary" type="button" :disabled="saving" @click="testNotifications">测试通知</button>
+          </n-button>
+          <n-button secondary attr-type="button" :disabled="saving" @click="testNotifications">测试通知</n-button>
         </div>
       </form>
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div v-if="loading" class="empty">加载中</div>
       <div v-else class="settings-grid">
         <article v-for="row in rows" :key="row.label" class="setting-item">
@@ -268,9 +276,9 @@ onMounted(loadSettings);
           <span class="setting-note">{{ row.note }}</span>
         </article>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>环境变量</h2>
@@ -278,7 +286,7 @@ onMounted(loadSettings);
         </div>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>变量</th>
@@ -343,11 +351,11 @@ onMounted(loadSettings);
               <td>{{ settings?.notifyCooldownSec ?? '-' }} 秒</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>维护操作</h2>
@@ -355,10 +363,34 @@ onMounted(loadSettings);
         </div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-danger" type="button" :disabled="resetting" @click="factoryReset">
+        <n-button type="error" attr-type="button" :disabled="resetting" @click="factoryReset">
           {{ resetting ? '处理中' : '重新初始化系统' }}
-        </button>
+        </n-button>
       </div>
-    </div>
+    </n-card>
+
+    <n-modal v-model:show="resetConfirmVisible" preset="card" title="重新初始化系统" class="reset-modal">
+      <p class="muted">输入 RESET 确认清空业务数据、运行设置和 WebDAV 自动任务。</p>
+      <n-input v-model:value="resetConfirmText" placeholder="RESET" />
+      <template #footer>
+        <div class="form-actions">
+          <n-button secondary attr-type="button" @click="resetConfirmVisible = false">取消</n-button>
+          <n-button
+            type="error"
+            attr-type="button"
+            :disabled="resetting || resetConfirmText !== 'RESET'"
+            @click="confirmFactoryReset"
+          >
+            {{ resetting ? '处理中' : '确认重新初始化' }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
   </section>
 </template>
+
+<style scoped lang="scss">
+.reset-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+</style>

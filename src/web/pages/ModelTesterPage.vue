@@ -48,6 +48,21 @@ const selectedRoute = computed(() => {
   if (!model) return null;
   return routes.value.find((route) => route.modelPattern === model || route.displayName === model) || null;
 });
+const modelSelectOptions = computed(() => modelOptions.value.map((model) => ({ label: model, value: model })));
+const downstreamKeyOptions = computed(() => [
+  { label: '全局策略', value: '' },
+  ...downstreamKeys.value.map((key) => ({
+    label: `${key.name} / ${key.keyMasked}${key.enabled ? '' : ' / 停用'}`,
+    value: String(key.id)
+  }))
+]);
+const channelOptions = computed(() => [
+  { label: '自动选择', value: '' },
+  ...channels.value.map((channel) => ({
+    label: `#${channel.id} / ${channel.siteName || '-'} / ${channel.accountName || channel.accountId}`,
+    value: String(channel.id)
+  }))
+]);
 
 const responseText = computed(() => result.value ? JSON.stringify(result.value, null, 2) : '');
 const responseTraceId = computed(() => {
@@ -190,89 +205,82 @@ onMounted(loadData);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>模型操练场</h2>
           <p class="muted">复用管理端测试入口，当前支持非流式 Chat。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="loading" @click="loadData">
+        <n-button secondary attr-type="button" :disabled="loading" @click="loadData">
           {{ loading ? '刷新中' : '刷新模型' }}
-        </button>
+        </n-button>
       </div>
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <form class="form-grid" @submit.prevent="sendTest">
         <label class="field">
           <span>模型</span>
-          <select v-model="form.model" class="select" required @change="handleModelChange">
-            <option v-for="model in modelOptions" :key="model" :value="model">{{ model }}</option>
-          </select>
+          <n-select v-model:value="form.model" filterable :options="modelSelectOptions" @update:value="handleModelChange" />
         </label>
         <label class="field">
           <span>下游 Key</span>
-          <select v-model="form.downstreamApiKeyId" class="select" @change="explainSelectedRoute">
-            <option value="">全局策略</option>
-            <option v-for="key in downstreamKeys" :key="key.id" :value="String(key.id)">
-              {{ key.name }} / {{ key.keyMasked }}{{ key.enabled ? '' : ' / 停用' }}
-            </option>
-          </select>
+          <n-select v-model:value="form.downstreamApiKeyId" :options="downstreamKeyOptions" @update:value="explainSelectedRoute" />
         </label>
         <label class="field">
           <span>Temperature</span>
-          <input v-model="form.temperature" class="input" min="0" max="2" step="0.1" type="number" placeholder="默认" />
+          <n-input v-model:value="form.temperature" placeholder="默认" />
         </label>
         <label class="field">
           <span>路由</span>
-          <input class="input" :value="selectedRoute ? selectedRoute.modelPattern : '自动匹配'" disabled />
+          <n-input :value="selectedRoute ? selectedRoute.modelPattern : '自动匹配'" disabled />
         </label>
         <label class="field">
           <span>强制通道</span>
-          <select v-model="form.forcedChannelId" class="select" :disabled="channels.length === 0" @change="explainSelectedRoute">
-            <option value="">自动选择</option>
-            <option v-for="channel in channels" :key="channel.id" :value="String(channel.id)">
-              #{{ channel.id }} / {{ channel.siteName || '-' }} / {{ channel.accountName || channel.accountId }}
-            </option>
-          </select>
+          <n-select
+            v-model:value="form.forcedChannelId"
+            :options="channelOptions"
+            :disabled="channels.length === 0"
+            @update:value="explainSelectedRoute"
+          />
         </label>
         <label class="field wide">
           <span>System</span>
-          <textarea v-model="form.system" class="textarea" placeholder="可选"></textarea>
+          <n-input type="textarea" v-model:value="form.system" placeholder="可选"></n-input>
         </label>
         <label class="field wide">
           <span>Prompt</span>
-          <textarea v-model="form.prompt" class="textarea" required></textarea>
+          <n-input type="textarea" v-model:value="form.prompt" required></n-input>
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-primary" type="submit" :disabled="sending || !form.model">
+          <n-button type="primary" attr-type="submit" :disabled="sending || !form.model">
             {{ sending ? '请求中' : '发送测试' }}
-          </button>
-          <button class="btn btn-secondary" type="button" :disabled="!selectedRoute" @click="explainSelectedRoute">解释路由</button>
+          </n-button>
+          <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainSelectedRoute">解释路由</n-button>
         </div>
       </form>
-    </div>
+    </n-card>
 
     <div class="two-column">
-      <div class="panel">
+      <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
             <h2>响应</h2>
             <p class="muted">返回上游 JSON，便于核对模型和 usage。</p>
           </div>
-          <button
+          <n-button secondary
             v-if="responseTraceId"
-            class="btn btn-secondary"
-            type="button"
+           
+            attr-type="button"
             :disabled="loadingTrace"
             @click="loadTrace(responseTraceId)"
           >
             {{ loadingTrace ? '加载中' : `Trace #${responseTraceId}` }}
-          </button>
+          </n-button>
         </div>
-        <textarea class="textarea mono" readonly :value="responseText" placeholder="发送测试后显示响应"></textarea>
-      </div>
+        <n-input type="textarea" readonly :value="responseText" placeholder="发送测试后显示响应"></n-input>
+      </n-card>
 
-      <div class="panel">
+      <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
             <h2>路由解释</h2>
@@ -280,11 +288,11 @@ onMounted(loadData);
           </div>
         </div>
         <div v-if="decision" class="table-wrap">
-          <table class="data-table">
+          <n-table size="small" :bordered="false" single-line class="admin-table">
             <thead>
               <tr>
                 <th>通道</th>
-                <th>站点</th>
+                <th>上游地址</th>
                 <th>账号</th>
                 <th>分数</th>
                 <th>概率</th>
@@ -299,22 +307,22 @@ onMounted(loadData);
                 <td>{{ candidate.score.toFixed(2) }}</td>
                 <td>{{ (candidate.probability * 100).toFixed(1) }}%</td>
                 <td>
-                  <span class="badge" :class="candidate.available ? 'success' : 'disabled'">
+                  <n-tag size="small" :type="candidate.available ? 'success' : 'error'">
                     {{ candidate.available ? '可用' : '过滤' }}
-                  </span>
+                  </n-tag>
                 </td>
               </tr>
               <tr v-if="decision.candidates.length === 0">
                 <td class="empty" colspan="6">暂无候选通道</td>
               </tr>
             </tbody>
-          </table>
+          </n-table>
         </div>
         <div v-else class="empty">暂无路由解释</div>
-      </div>
+      </n-card>
     </div>
 
-    <div v-if="selectedTrace" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="selectedTrace">
       <div class="panel-header">
         <div>
           <h2>Debug Trace #{{ selectedTrace.id }}</h2>
@@ -322,7 +330,7 @@ onMounted(loadData);
         </div>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>尝试</th>
@@ -344,10 +352,10 @@ onMounted(loadData);
               <td class="empty" colspan="5">暂无尝试记录</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <tbody>
             <tr>
               <th>最终上游</th>
@@ -358,8 +366,8 @@ onMounted(loadData);
               <td><pre class="mono">{{ formatJson(selectedTrace.decisionSummary) }}</pre></td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

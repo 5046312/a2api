@@ -323,6 +323,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS proxy_video_tasks_public_id_unique ON proxy_vi
 CREATE INDEX IF NOT EXISTS proxy_video_tasks_upstream_video_id_idx ON proxy_video_tasks(upstream_video_id);
 CREATE INDEX IF NOT EXISTS proxy_video_tasks_created_at_idx ON proxy_video_tasks(created_at);
 
+CREATE TABLE IF NOT EXISTS account_monitors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  interval_sec INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_check_at TEXT,
+  last_up_at TEXT,
+  last_down_at TEXT,
+  next_check_at TEXT,
+  consecutive_fail_count INTEGER NOT NULL DEFAULT 0,
+  consecutive_success_count INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  last_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(account_id)
+);
+CREATE INDEX IF NOT EXISTS account_monitors_status_idx ON account_monitors(status);
+CREATE INDEX IF NOT EXISTS account_monitors_next_check_idx ON account_monitors(enabled, next_check_at);
+
+CREATE TABLE IF NOT EXISTS monitor_heartbeats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  monitor_id INTEGER NOT NULL REFERENCES account_monitors(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  latency_ms INTEGER,
+  message TEXT,
+  retries INTEGER NOT NULL DEFAULT 0,
+  important INTEGER NOT NULL DEFAULT 0,
+  error_type TEXT,
+  model_count INTEGER
+);
+CREATE INDEX IF NOT EXISTS monitor_heartbeats_monitor_checked_idx ON monitor_heartbeats(monitor_id, checked_at);
+CREATE INDEX IF NOT EXISTS monitor_heartbeats_account_checked_idx ON monitor_heartbeats(account_id, checked_at);
+CREATE INDEX IF NOT EXISTS monitor_heartbeats_status_checked_idx ON monitor_heartbeats(status, checked_at);
+CREATE INDEX IF NOT EXISTS monitor_heartbeats_important_idx ON monitor_heartbeats(important, checked_at);
+
 CREATE TABLE IF NOT EXISTS site_announcements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -367,11 +406,98 @@ CREATE INDEX IF NOT EXISTS events_type_created_idx ON events(type, created_at);
 `);
 
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
+  migrateAccountApiKeysToInternalCredentials();
 }
 
 function ensureColumn(table: string, column: string, statement: string): void {
   const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!rows.some((row) => row.name === column)) sqlite.exec(statement);
+}
+
+function migrateAccountApiKeysToInternalCredentials(): void {
+  sqlite.exec(`
+INSERT INTO account_tokens (
+  account_id,
+  name,
+  token,
+  token_group,
+  value_status,
+  source,
+  enabled,
+  is_default,
+  local_name_locked,
+  local_status_locked,
+  created_at,
+  updated_at
+)
+SELECT
+  accounts.id,
+  'default',
+  accounts.api_token,
+  NULL,
+  'ready',
+  'account_default',
+  1,
+  1,
+  1,
+  1,
+  accounts.created_at,
+  accounts.updated_at
+FROM accounts
+WHERE accounts.api_token IS NOT NULL
+  AND trim(accounts.api_token) != ''
+  AND NOT EXISTS (
+    SELECT 1 FROM account_tokens
+    WHERE account_tokens.account_id = accounts.id
+      AND account_tokens.is_default = 1
+  );
+
+INSERT INTO account_tokens (
+  account_id,
+  name,
+  token,
+  token_group,
+  value_status,
+  source,
+  enabled,
+  is_default,
+  local_name_locked,
+  local_status_locked,
+  created_at,
+  updated_at
+)
+SELECT
+  accounts.id,
+  'legacy-api-key',
+  accounts.api_token,
+  NULL,
+  'ready',
+  'account_default',
+  1,
+  0,
+  1,
+  1,
+  accounts.created_at,
+  accounts.updated_at
+FROM accounts
+WHERE accounts.api_token IS NOT NULL
+  AND trim(accounts.api_token) != ''
+  AND EXISTS (
+    SELECT 1 FROM account_tokens
+    WHERE account_tokens.account_id = accounts.id
+      AND account_tokens.is_default = 1
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM account_tokens
+    WHERE account_tokens.account_id = accounts.id
+      AND account_tokens.token = accounts.api_token
+  );
+
+UPDATE accounts
+SET api_token = NULL
+WHERE api_token IS NOT NULL
+  AND trim(api_token) != '';
+`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

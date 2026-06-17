@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
+import { useDialog } from 'naive-ui';
 import { api, type Site, type SiteBatchAction, type SiteEndpoint } from '@web/api';
 
 type SiteForm = {
@@ -33,6 +34,31 @@ const disabledModelsText = ref('');
 const availableModels = ref<string[]>([]);
 const selectedSiteIds = ref<number[]>([]);
 const filters = reactive({ keyword: '', status: '' });
+const dialog = useDialog();
+const platformOptions = [
+  'openai',
+  'new-api',
+  'one-api',
+  'one-hub',
+  'done-hub',
+  'veloera',
+  'anyrouter',
+  'sub2api',
+  'cliproxyapi',
+  'claude',
+  'gemini',
+  'codex',
+  'gemini-cli',
+  'antigravity'
+].map((platform) => ({ label: platform, value: platform }));
+const siteStatusOptions = [
+  { label: '启用', value: 'active' },
+  { label: '停用', value: 'disabled' }
+];
+const filterStatusOptions = [
+  { label: '全部状态', value: '' },
+  ...siteStatusOptions
+];
 const form = reactive<SiteForm>({
   name: '',
   url: '',
@@ -153,10 +179,9 @@ function allVisibleSitesSelected() {
   return sites.value.length > 0 && sites.value.every((site) => selectedSiteIds.value.includes(site.id));
 }
 
-function toggleAllVisibleSites(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
+function toggleAllVisibleSites() {
   const visibleIds = sites.value.map((site) => site.id);
-  if (checked) {
+  if (!allVisibleSitesSelected()) {
     selectedSiteIds.value = Array.from(new Set([...selectedSiteIds.value, ...visibleIds]));
   } else {
     selectedSiteIds.value = selectedSiteIds.value.filter((id) => !visibleIds.includes(id));
@@ -274,36 +299,48 @@ async function detect() {
   }
 }
 
-async function removeSite(site: Site) {
-  if (!window.confirm(`删除站点 ${site.name}？`)) return;
-  error.value = '';
-  try {
-    await api.deleteSite(site.id);
-    if (endpointSite.value?.id === site.id) clearEndpointPanel();
-    if (disabledModelSite.value?.id === site.id) clearDisabledModelsPanel();
-    await loadSites();
-  } catch (err) {
-    setError(err, '删除站点失败');
-  }
+function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
+  dialog.warning({
+    title: '确认操作',
+    content,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick
+  });
+}
+
+function removeSite(site: Site) {
+  confirmAction(`删除站点 ${site.name}？`, async () => {
+    error.value = '';
+    try {
+      await api.deleteSite(site.id);
+      if (endpointSite.value?.id === site.id) clearEndpointPanel();
+      if (disabledModelSite.value?.id === site.id) clearDisabledModelsPanel();
+      await loadSites();
+    } catch (err) {
+      setError(err, '删除站点失败');
+    }
+  });
 }
 
 async function batchUpdateSites(action: SiteBatchAction) {
   const ids = selectedSiteIds.value.slice();
   if (ids.length === 0) return;
-  if (!window.confirm(`批量${batchActionLabel(action)} ${ids.length} 个站点？`)) return;
-  loading.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.batchUpdateSites(ids, action);
-    selectedSiteIds.value = [];
-    message.value = `批量${batchActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
-    await loadSites();
-  } catch (err) {
-    setError(err, '批量更新站点失败');
-  } finally {
-    loading.value = false;
-  }
+  confirmAction(`批量${batchActionLabel(action)} ${ids.length} 个站点？`, async () => {
+    loading.value = true;
+    error.value = '';
+    message.value = '';
+    try {
+      const result = await api.batchUpdateSites(ids, action);
+      selectedSiteIds.value = [];
+      message.value = `批量${batchActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
+      await loadSites();
+    } catch (err) {
+      setError(err, '批量更新站点失败');
+    } finally {
+      loading.value = false;
+    }
+  });
 }
 
 async function saveDisabledModels() {
@@ -377,14 +414,16 @@ async function toggleEndpoint(endpoint: SiteEndpoint) {
 
 async function removeEndpoint(endpoint: SiteEndpoint) {
   const site = endpointSite.value;
-  if (!site || !window.confirm(`删除地址 ${endpoint.url}？`)) return;
-  error.value = '';
-  try {
-    await api.deleteSiteEndpoint(endpoint.id);
-    await loadSiteEndpoints(site);
-  } catch (err) {
-    setError(err, '删除地址失败');
-  }
+  if (!site) return;
+  confirmAction(`删除地址 ${endpoint.url}？`, async () => {
+    error.value = '';
+    try {
+      await api.deleteSiteEndpoint(endpoint.id);
+      await loadSiteEndpoints(site);
+    } catch (err) {
+      setError(err, '删除地址失败');
+    }
+  });
 }
 
 onMounted(loadSites);
@@ -392,91 +431,82 @@ onMounted(loadSites);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>站点配置</h2>
           <p class="muted">管理上游 API 站点和代理参数。</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="resetForm">清空</button>
+        <n-button secondary attr-type="button" @click="resetForm">清空</n-button>
       </div>
       <form class="form-grid" @submit.prevent="submit">
         <label class="field">
           <span>名称</span>
-          <input v-model="form.name" class="input" required />
+          <n-input v-model:value="form.name" required />
         </label>
         <label class="field wide">
           <span>地址</span>
-          <input v-model="form.url" class="input" required placeholder="https://api.example.com" />
+          <n-input v-model:value="form.url" required placeholder="https://api.example.com" />
         </label>
         <label class="field">
           <span>平台</span>
-          <input v-model="form.platform" class="input" required />
+          <n-select v-model:value="form.platform" filterable :options="platformOptions" />
         </label>
         <label class="field">
           <span>状态</span>
-          <select v-model="form.status" class="select">
-            <option value="active">启用</option>
-            <option value="disabled">停用</option>
-          </select>
+          <n-select v-model:value="form.status" :options="siteStatusOptions" />
         </label>
         <label class="field">
           <span>权重</span>
-          <input v-model.number="form.globalWeight" class="input" min="0.01" step="0.01" type="number" />
+          <n-input-number v-model:value="form.globalWeight" :min="0.01" :step="0.01" />
         </label>
         <label class="field">
           <span>排序</span>
-          <input v-model.number="form.sortOrder" class="input" min="0" step="1" type="number" />
+          <n-input-number v-model:value="form.sortOrder" :min="0" :step="1" />
         </label>
         <label class="field">
           <span>代理地址</span>
-          <input v-model="form.proxyUrl" class="input" placeholder="可选" />
+          <n-input v-model:value="form.proxyUrl" placeholder="可选" />
         </label>
         <label class="check-row">
-          <input v-model="form.isPinned" type="checkbox" />
-          <span>置顶站点</span>
+          <n-checkbox v-model:checked="form.isPinned">置顶站点</n-checkbox>
         </label>
         <label class="check-row">
-          <input v-model="form.useSystemProxy" type="checkbox" />
-          <span>使用系统代理</span>
+          <n-checkbox v-model:checked="form.useSystemProxy">使用系统代理</n-checkbox>
         </label>
         <label class="field wide">
           <span>自定义 Header JSON</span>
-          <textarea v-model="form.customHeadersText" class="textarea" rows="4" placeholder='{"x-api-key":"value"}'></textarea>
+          <n-input type="textarea" v-model:value="form.customHeadersText" :rows="4" placeholder='{"x-api-key":"value"}'></n-input>
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-secondary" type="button" :disabled="saving" @click="detect">检测平台</button>
-          <button class="btn btn-primary" type="submit" :disabled="saving">
+          <n-button secondary attr-type="button" :disabled="saving" @click="detect">检测平台</n-button>
+          <n-button type="primary" attr-type="submit" :disabled="saving">
             {{ saving ? '保存中' : editingId ? '更新站点' : '创建站点' }}
-          </button>
+          </n-button>
         </div>
       </form>
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-    </div>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="toolbar">
-        <input v-model="filters.keyword" class="input" placeholder="搜索名称或地址" @keyup.enter="loadSites" />
-        <select v-model="filters.status" class="select" @change="loadSites">
-          <option value="">全部状态</option>
-          <option value="active">启用</option>
-          <option value="disabled">停用</option>
-        </select>
-        <button class="btn btn-secondary" type="button" @click="loadSites">刷新</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('enable')">批量启用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('disable')">批量停用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('enableSystemProxy')">批量系统代理</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('disableSystemProxy')">取消系统代理</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('delete')">批量删除</button>
+        <n-input v-model:value="filters.keyword" placeholder="搜索名称或地址" @keyup.enter="loadSites" />
+        <n-select v-model:value="filters.status" :options="filterStatusOptions" class="toolbar-select" @update:value="loadSites" />
+        <n-button secondary attr-type="button" @click="loadSites">刷新</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('enable')">批量启用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('disable')">批量停用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('enableSystemProxy')">批量系统代理</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('disableSystemProxy')">取消系统代理</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedSiteIds.length === 0 || loading" @click="batchUpdateSites('delete')">批量删除</n-button>
         <span class="muted">已选 {{ selectedSiteIds.length }}</span>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>
-                <input type="checkbox" :checked="allVisibleSitesSelected()" :disabled="sites.length === 0" @change="toggleAllVisibleSites" />
+                <n-checkbox :checked="allVisibleSitesSelected()" :disabled="sites.length === 0" @update:checked="toggleAllVisibleSites" />
               </th>
               <th>名称</th>
               <th>平台</th>
@@ -491,37 +521,39 @@ onMounted(loadSites);
           <tbody>
             <tr v-for="site in sites" :key="site.id" :class="{ selected: isSiteSelected(site.id) }">
               <td>
-                <input type="checkbox" :checked="isSiteSelected(site.id)" @change="toggleSiteSelection(site.id)" />
+                <n-checkbox :checked="isSiteSelected(site.id)" @update:checked="toggleSiteSelection(site.id)" />
               </td>
               <td>{{ site.name }}</td>
               <td>{{ site.platform }}</td>
               <td class="mono">{{ site.url }}</td>
-              <td><span class="badge" :class="site.status">{{ site.status }}</span></td>
+              <td>
+                <n-tag size="small" :type="site.status === 'active' ? 'success' : 'error'">{{ site.status }}</n-tag>
+              </td>
               <td>{{ site.globalWeight }}</td>
               <td>{{ site.sortOrder }}</td>
               <td>{{ site.isPinned ? '是' : '否' }}</td>
               <td class="actions">
-                <button class="text-btn" type="button" @click="loadSiteEndpoints(site)">地址池</button>
-                <button class="text-btn" type="button" @click="loadSiteDisabledModels(site)">禁用模型</button>
-                <button class="text-btn" type="button" @click="editSite(site)">编辑</button>
-                <button class="text-btn danger" type="button" @click="removeSite(site)">删除</button>
+                <n-button text attr-type="button" @click="loadSiteEndpoints(site)">地址池</n-button>
+                <n-button text attr-type="button" @click="loadSiteDisabledModels(site)">禁用模型</n-button>
+                <n-button text attr-type="button" @click="editSite(site)">编辑</n-button>
+                <n-button type="error" text attr-type="button" @click="removeSite(site)">删除</n-button>
               </td>
             </tr>
             <tr v-if="!loading && sites.length === 0">
               <td class="empty" colspan="9">暂无站点</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div v-if="disabledModelSite" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="disabledModelSite">
       <div class="panel-header">
         <div>
           <h2>禁用模型：{{ disabledModelSite.name }}</h2>
           <p class="muted">{{ disabledModelRows().length }} 条规则 / {{ availableModels.length }} 个可用模型</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="clearDisabledModelsPanel">关闭</button>
+        <n-button secondary attr-type="button" @click="clearDisabledModelsPanel">关闭</n-button>
       </div>
 
       <div v-if="availableModels.length > 0" class="model-list">
@@ -531,48 +563,47 @@ onMounted(loadSites);
       <form class="form-grid" @submit.prevent="saveDisabledModels">
         <label class="field wide">
           <span>模型规则</span>
-          <textarea v-model="disabledModelsText" class="textarea" rows="6" :disabled="disabledModelsLoading" placeholder="gpt-4o&#10;gpt-*"></textarea>
+          <n-input type="textarea" v-model:value="disabledModelsText" :rows="6" :disabled="disabledModelsLoading" placeholder="gpt-4o&#10;gpt-*"></n-input>
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-primary" type="submit" :disabled="disabledModelsSaving || disabledModelsLoading">
+          <n-button type="primary" attr-type="submit" :disabled="disabledModelsSaving || disabledModelsLoading">
             {{ disabledModelsSaving ? '保存中' : '保存禁用模型' }}
-          </button>
+          </n-button>
         </div>
       </form>
-    </div>
+    </n-card>
 
-    <div v-if="endpointSite" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="endpointSite">
       <div class="panel-header">
         <div>
           <h2>地址池：{{ endpointSite.name }}</h2>
           <p class="muted">{{ siteEndpoints.length }} 个地址</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="clearEndpointPanel">关闭</button>
+        <n-button secondary attr-type="button" @click="clearEndpointPanel">关闭</n-button>
       </div>
 
       <form class="form-grid" @submit.prevent="saveEndpoint">
         <label class="field wide">
           <span>API 地址</span>
-          <input v-model="endpointForm.url" class="input" required placeholder="https://api.example.com" />
+          <n-input v-model:value="endpointForm.url" required placeholder="https://api.example.com" />
         </label>
         <label class="field">
           <span>排序</span>
-          <input v-model.number="endpointForm.sortOrder" class="input" min="0" step="1" type="number" />
+          <n-input-number v-model:value="endpointForm.sortOrder" :min="0" :step="1" />
         </label>
         <label class="check-row">
-          <input v-model="endpointForm.enabled" type="checkbox" />
-          <span>启用地址</span>
+          <n-checkbox v-model:checked="endpointForm.enabled">启用地址</n-checkbox>
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-secondary" type="button" :disabled="endpointSaving" @click="resetEndpointForm">清空地址</button>
-          <button class="btn btn-primary" type="submit" :disabled="endpointSaving">
+          <n-button secondary attr-type="button" :disabled="endpointSaving" @click="resetEndpointForm">清空地址</n-button>
+          <n-button type="primary" attr-type="submit" :disabled="endpointSaving">
             {{ endpointSaving ? '保存中' : editingEndpointId ? '更新地址' : '新增地址' }}
-          </button>
+          </n-button>
         </div>
       </form>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>地址</th>
@@ -586,24 +617,28 @@ onMounted(loadSites);
           <tbody>
             <tr v-for="endpoint in siteEndpoints" :key="endpoint.id">
               <td class="mono">{{ endpoint.url }}</td>
-              <td><span class="badge" :class="endpoint.enabled ? 'active' : 'disabled'">{{ endpoint.enabled ? '启用' : '停用' }}</span></td>
+              <td>
+                <n-tag size="small" :type="endpoint.enabled ? 'success' : 'error'">
+                  {{ endpoint.enabled ? '启用' : '停用' }}
+                </n-tag>
+              </td>
               <td>{{ endpoint.sortOrder }}</td>
               <td>{{ formatTime(endpoint.cooldownUntil) }}</td>
               <td>{{ endpoint.lastFailureReason || '-' }}</td>
               <td class="actions">
-                <button class="text-btn" type="button" @click="editEndpoint(endpoint)">编辑</button>
-                <button class="text-btn" type="button" @click="toggleEndpoint(endpoint)">
+                <n-button text attr-type="button" @click="editEndpoint(endpoint)">编辑</n-button>
+                <n-button text attr-type="button" @click="toggleEndpoint(endpoint)">
                   {{ endpoint.enabled ? '停用' : '启用' }}
-                </button>
-                <button class="text-btn danger" type="button" @click="removeEndpoint(endpoint)">删除</button>
+                </n-button>
+                <n-button type="error" text attr-type="button" @click="removeEndpoint(endpoint)">删除</n-button>
               </td>
             </tr>
             <tr v-if="!endpointLoading && siteEndpoints.length === 0">
               <td class="empty" colspan="6">暂无地址</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

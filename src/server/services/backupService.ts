@@ -4,6 +4,7 @@ import { db, schema, sqlite } from '../db/index.js';
 import { parseJsonArray, parseJsonRecord, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import { rebuildRoutes, type RouteRebuildResult } from './routeRefreshService.js';
+import { monitorSettingsPayloadSchema, updateMonitorSettings, type MonitorSettings } from './accountMonitorService.js';
 import { settingsPayloadSchema, updateSettings } from './settingsService.js';
 import { clearTokenRouterCache } from './tokenRouter.js';
 import type { CredentialRef } from './downstreamPolicy.js';
@@ -33,6 +34,8 @@ type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type DownstreamKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 type ProxyFileRow = typeof schema.proxyFiles.$inferSelect;
 type ProxyVideoTaskRow = typeof schema.proxyVideoTasks.$inferSelect;
+type AccountMonitorRow = typeof schema.accountMonitors.$inferSelect;
+type MonitorHeartbeatRow = typeof schema.monitorHeartbeats.$inferSelect;
 type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
 
 type BackupAccountsSection = {
@@ -48,6 +51,8 @@ type BackupAccountsSection = {
   downstreamApiKeys: DownstreamKeyRow[];
   proxyFiles: ProxyFileRow[];
   proxyVideoTasks: ProxyVideoTaskRow[];
+  accountMonitors: AccountMonitorRow[];
+  monitorHeartbeats: MonitorHeartbeatRow[];
   siteAnnouncements: SiteAnnouncementRow[];
 };
 
@@ -94,7 +99,8 @@ const importablePreferenceKeys = [
   'logCleanupRetentionDays',
   'notificationWebhookEnabled',
   'notificationWebhookUrl',
-  'notifyCooldownSec'
+  'notifyCooldownSec',
+  'monitorSettings'
 ] as const;
 
 export function exportBackup(type: BackupType): BackupDocument {
@@ -118,6 +124,8 @@ export function exportBackup(type: BackupType): BackupDocument {
       downstreamApiKeys: db.select().from(schema.downstreamApiKeys).all(),
       proxyFiles: db.select().from(schema.proxyFiles).all(),
       proxyVideoTasks: db.select().from(schema.proxyVideoTasks).all(),
+      accountMonitors: db.select().from(schema.accountMonitors).all(),
+      monitorHeartbeats: db.select().from(schema.monitorHeartbeats).all(),
       siteAnnouncements: db.select().from(schema.siteAnnouncements).all()
     };
   }
@@ -207,6 +215,7 @@ function exportPreferences(): Record<string, unknown> {
 function importPreferences(preferences: Record<string, unknown>, summary: ImportSummary, warnings: string[]): void {
   const payload: Record<string, unknown> = {};
   for (const key of importablePreferenceKeys) {
+    if (key === 'monitorSettings') continue;
     if (Object.prototype.hasOwnProperty.call(preferences, key)) {
       payload[key] = preferences[key];
     }
@@ -222,6 +231,17 @@ function importPreferences(preferences: Record<string, unknown>, summary: Import
     updateSettings(parsed.data);
     summary.importedPreferences = Object.keys(parsed.data).length;
     summary.updated += summary.importedPreferences;
+    if (Object.prototype.hasOwnProperty.call(preferences, 'monitorSettings')) {
+      const monitorSettings = monitorSettingsPayloadSchema.safeParse(preferences.monitorSettings);
+      if (monitorSettings.success) {
+        updateMonitorSettings(compactMonitorSettings(monitorSettings.data));
+        summary.importedPreferences += 1;
+        summary.updated += 1;
+      } else {
+        warnings.push(`Monitor settings skipped: ${monitorSettings.error.message}`);
+        summary.skipped += 1;
+      }
+    }
   } catch (error) {
     warnings.push(error instanceof Error ? error.message : 'Preferences import failed');
     summary.skipped += 1;
@@ -393,7 +413,7 @@ function importAccounts(
           username: row.username,
           credentialMode: row.credentialMode,
           accessToken: row.accessToken,
-          apiToken: row.apiToken,
+          apiToken: null,
           balance: row.balance,
           balanceUsed: row.balanceUsed,
           quota: row.quota,
@@ -410,15 +430,59 @@ function importAccounts(
         })
         .where(eq(schema.accounts.id, existing.id))
         .run();
+      upsertImportedAccountApiKey(existing.id, row.apiToken);
       accountIdMap.set(row.id, existing.id);
       summary.updated += 1;
     } else {
-      const inserted = db.insert(schema.accounts).values({ ...withoutId(row), siteId }).returning().get();
+      const inserted = db.insert(schema.accounts).values({ ...withoutId(row), siteId, apiToken: null }).returning().get();
+      upsertImportedAccountApiKey(inserted.id, row.apiToken);
       accountIdMap.set(row.id, inserted.id);
       summary.created += 1;
     }
     summary.importedAccounts += 1;
   }
+}
+
+function upsertImportedAccountApiKey(accountId: number, apiKey: string | null): void {
+  const token = apiKey?.trim();
+  if (!token) return;
+  const now = nowIso();
+  const current = db
+    .select()
+    .from(schema.accountTokens)
+    .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.isDefault, true)))
+    .get();
+  db.update(schema.accountTokens).set({ isDefault: false }).where(eq(schema.accountTokens.accountId, accountId)).run();
+  if (current) {
+    db.update(schema.accountTokens)
+      .set({
+        token,
+        valueStatus: 'ready',
+        source: 'account_default',
+        enabled: true,
+        isDefault: true,
+        updatedAt: now
+      })
+      .where(eq(schema.accountTokens.id, current.id))
+      .run();
+    return;
+  }
+  db.insert(schema.accountTokens)
+    .values({
+      accountId,
+      name: 'default',
+      token,
+      tokenGroup: null,
+      valueStatus: 'ready',
+      source: 'account_default',
+      enabled: true,
+      isDefault: true,
+      localNameLocked: true,
+      localStatusLocked: true,
+      createdAt: now,
+      updatedAt: now
+    })
+    .run();
 }
 
 function importAccountTokens(
@@ -733,6 +797,19 @@ function rows<T>(section: Record<string, unknown>, key: string, warnings: string
 function withoutId<T extends { id: number }>(row: T): Omit<T, 'id'> {
   const { id: _id, ...rest } = row;
   return rest;
+}
+
+function compactMonitorSettings(value: z.infer<typeof monitorSettingsPayloadSchema>): Partial<MonitorSettings> {
+  const output: Partial<MonitorSettings> = {};
+  if (value.enabled !== undefined) output.enabled = value.enabled;
+  if (value.intervalSec !== undefined) output.intervalSec = value.intervalSec;
+  if (value.timeoutSec !== undefined) output.timeoutSec = value.timeoutSec;
+  if (value.maxRetries !== undefined) output.maxRetries = value.maxRetries;
+  if (value.concurrency !== undefined) output.concurrency = value.concurrency;
+  if (value.retentionDays !== undefined) output.retentionDays = value.retentionDays;
+  if (value.notifyOnDown !== undefined) output.notifyOnDown = value.notifyOnDown;
+  if (value.notifyOnRecovery !== undefined) output.notifyOnRecovery = value.notifyOnRecovery;
+  return output;
 }
 
 function sameNullable(left: string | null, right: string | null): boolean {

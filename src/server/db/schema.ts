@@ -404,6 +404,55 @@ export const proxyVideoTasks = sqliteTable(
   })
 );
 
+export const accountMonitors = sqliteTable(
+  'account_monitors',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    intervalSec: integer('interval_sec'),
+    status: text('status').notNull().default('pending'),
+    lastCheckAt: text('last_check_at'),
+    lastUpAt: text('last_up_at'),
+    lastDownAt: text('last_down_at'),
+    nextCheckAt: text('next_check_at'),
+    consecutiveFailCount: integer('consecutive_fail_count').notNull().default(0),
+    consecutiveSuccessCount: integer('consecutive_success_count').notNull().default(0),
+    latencyMs: integer('latency_ms'),
+    lastMessage: text('last_message'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    accountUnique: uniqueIndex('account_monitors_account_unique').on(table.accountId),
+    statusIndex: index('account_monitors_status_idx').on(table.status),
+    nextCheckIndex: index('account_monitors_next_check_idx').on(table.enabled, table.nextCheckAt)
+  })
+);
+
+export const monitorHeartbeats = sqliteTable(
+  'monitor_heartbeats',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    monitorId: integer('monitor_id').notNull().references(() => accountMonitors.id, { onDelete: 'cascade' }),
+    accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(),
+    checkedAt: text('checked_at').notNull(),
+    latencyMs: integer('latency_ms'),
+    message: text('message'),
+    retries: integer('retries').notNull().default(0),
+    important: integer('important', { mode: 'boolean' }).notNull().default(false),
+    errorType: text('error_type'),
+    modelCount: integer('model_count')
+  },
+  (table) => ({
+    monitorCheckedIndex: index('monitor_heartbeats_monitor_checked_idx').on(table.monitorId, table.checkedAt),
+    accountCheckedIndex: index('monitor_heartbeats_account_checked_idx').on(table.accountId, table.checkedAt),
+    statusCheckedIndex: index('monitor_heartbeats_status_checked_idx').on(table.status, table.checkedAt),
+    importantIndex: index('monitor_heartbeats_important_idx').on(table.important, table.checkedAt)
+  })
+);
+
 export const siteAnnouncements = sqliteTable(
   'site_announcements',
   {
@@ -474,6 +523,8 @@ export const schema = {
   proxyDebugAttempts,
   proxyFiles,
   proxyVideoTasks,
+  accountMonitors,
+  monitorHeartbeats,
   siteAnnouncements,
   settings,
   events

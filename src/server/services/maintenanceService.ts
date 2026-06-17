@@ -21,6 +21,7 @@ export type ClearUsageDataResult = {
   deletedProxyLogs: number;
   deletedProxyDebugTraces: number;
   deletedProxyDebugAttempts: number;
+  deletedMonitorHeartbeats: number;
   resetRouteChannels: number;
   resetAccounts: number;
   resetDownstreamKeys: number;
@@ -46,6 +47,8 @@ export type FactoryResetResult = {
     proxyDebugAttempts: number;
     proxyFiles: number;
     proxyVideoTasks: number;
+    accountMonitors: number;
+    monitorHeartbeats: number;
     siteAnnouncements: number;
     settings: number;
     events: number;
@@ -109,6 +112,7 @@ export function clearUsageData(): ClearUsageDataResult {
   const deletedProxyLogs = db.delete(schema.proxyLogs).run().changes;
   const deletedProxyDebugAttempts = db.delete(schema.proxyDebugAttempts).run().changes;
   const deletedProxyDebugTraces = db.delete(schema.proxyDebugTraces).run().changes;
+  const deletedMonitorHeartbeats = db.delete(schema.monitorHeartbeats).run().changes;
   const resetRouteChannels = db
     .update(schema.routeChannels)
     .set({
@@ -143,6 +147,7 @@ export function clearUsageData(): ClearUsageDataResult {
     deletedProxyLogs,
     deletedProxyDebugTraces,
     deletedProxyDebugAttempts,
+    deletedMonitorHeartbeats,
     resetRouteChannels,
     resetAccounts,
     resetDownstreamKeys
@@ -157,6 +162,8 @@ export function factoryReset(): FactoryResetResult {
     const routeChannels = db.delete(schema.routeChannels).run().changes;
     const tokenModelAvailability = db.delete(schema.tokenModelAvailability).run().changes;
     const modelAvailability = db.delete(schema.modelAvailability).run().changes;
+    const monitorHeartbeats = db.delete(schema.monitorHeartbeats).run().changes;
+    const accountMonitors = db.delete(schema.accountMonitors).run().changes;
     const accountTokens = db.delete(schema.accountTokens).run().changes;
     const accounts = db.delete(schema.accounts).run().changes;
     const tokenRoutes = db.delete(schema.tokenRoutes).run().changes;
@@ -185,6 +192,8 @@ export function factoryReset(): FactoryResetResult {
       proxyDebugAttempts,
       proxyFiles,
       proxyVideoTasks,
+      accountMonitors,
+      monitorHeartbeats,
       siteAnnouncements,
       settings,
       events

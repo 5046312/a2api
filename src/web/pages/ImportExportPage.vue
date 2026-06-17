@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useDialog } from 'naive-ui';
 import {
   api,
   type BackupImportResult,
@@ -17,6 +18,7 @@ const loading = ref(false);
 const error = ref('');
 const message = ref('');
 const importResult = ref<BackupImportResult | null>(null);
+const dialog = useDialog();
 const webdavLoading = ref(false);
 const webdavPasswordMasked = ref('');
 const webdavState = ref<BackupWebdavState>({ lastSyncAt: null, lastError: null });
@@ -37,6 +39,11 @@ const webdavForm = ref({
   autoSyncEnabled: false,
   autoSyncCron: '0 */6 * * *'
 });
+const backupTypeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '账号数据', value: 'accounts' },
+  { label: '偏好设置', value: 'preferences' }
+];
 
 const summaryRows = computed(() => {
   const summary = importResult.value?.summary;
@@ -45,9 +52,9 @@ const summaryRows = computed(() => {
     { label: '新增', value: summary.created },
     { label: '更新', value: summary.updated },
     { label: '跳过', value: summary.skipped },
-    { label: '站点', value: summary.importedSites },
+    { label: '上游', value: summary.importedSites },
     { label: '账号', value: summary.importedAccounts },
-    { label: 'Token', value: summary.importedTokens },
+    { label: '凭据', value: summary.importedTokens },
     { label: '路由', value: summary.importedRoutes },
     { label: '下游 Key', value: summary.importedDownstreamKeys },
     { label: '文件', value: summary.importedProxyFiles },
@@ -104,18 +111,25 @@ async function selectImportFile(event: Event) {
 
 async function importJson() {
   if (!importDocument.value) return;
-  if (!window.confirm(`导入 ${importType.value} 备份？`)) return;
-  loading.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    importResult.value = await api.importBackup(importDocument.value, importType.value);
-    message.value = '导入完成';
-  } catch (err) {
-    setError(err, '导入失败');
-  } finally {
-    loading.value = false;
-  }
+  dialog.warning({
+    title: '确认导入',
+    content: `导入 ${importType.value} 备份？`,
+    positiveText: '确认导入',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      loading.value = true;
+      error.value = '';
+      message.value = '';
+      try {
+        importResult.value = await api.importBackup(importDocument.value, importType.value);
+        message.value = '导入完成';
+      } catch (err) {
+        setError(err, '导入失败');
+      } finally {
+        loading.value = false;
+      }
+    }
+  });
 }
 
 function applyWebdavSnapshot(snapshot: BackupWebdavSnapshot) {
@@ -185,21 +199,28 @@ async function exportWebdav() {
 }
 
 async function importWebdav() {
-  if (!window.confirm('从 WebDAV 导入备份？')) return;
-  webdavLoading.value = true;
-  error.value = '';
-  message.value = '';
-  importResult.value = null;
-  try {
-    const result = await api.importBackupFromWebdav();
-    importResult.value = result;
-    webdavState.value = { lastSyncAt: result.lastSyncAt, lastError: result.lastError };
-    message.value = `WebDAV 导入完成：${result.fileUrl}`;
-  } catch (err) {
-    setError(err, 'WebDAV 导入失败');
-  } finally {
-    webdavLoading.value = false;
-  }
+  dialog.warning({
+    title: '确认导入',
+    content: '从 WebDAV 导入备份？',
+    positiveText: '确认导入',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      webdavLoading.value = true;
+      error.value = '';
+      message.value = '';
+      importResult.value = null;
+      try {
+        const result = await api.importBackupFromWebdav();
+        importResult.value = result;
+        webdavState.value = { lastSyncAt: result.lastSyncAt, lastError: result.lastError };
+        message.value = `WebDAV 导入完成：${result.fileUrl}`;
+      } catch (err) {
+        setError(err, 'WebDAV 导入失败');
+      } finally {
+        webdavLoading.value = false;
+      }
+    }
+  });
 }
 
 function renderClientConfig(content: string) {
@@ -247,7 +268,7 @@ onMounted(() => {
 <template>
   <section class="page-stack">
     <div class="two-column">
-      <div class="panel">
+      <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
             <h2>JSON 导出</h2>
@@ -257,21 +278,17 @@ onMounted(() => {
         <div class="form-grid single">
           <label class="field">
             <span>范围</span>
-            <select v-model="exportType" class="select">
-              <option value="all">全部</option>
-              <option value="accounts">账号数据</option>
-              <option value="preferences">偏好设置</option>
-            </select>
+            <n-select v-model:value="exportType" :options="backupTypeOptions" />
           </label>
           <div class="form-actions">
-            <button class="btn btn-primary" type="button" :disabled="loading" @click="exportJson">
+            <n-button type="primary" attr-type="button" :disabled="loading" @click="exportJson">
               {{ loading ? '处理中' : '下载 JSON' }}
-            </button>
+            </n-button>
           </div>
         </div>
-      </div>
+      </n-card>
 
-      <div class="panel">
+      <n-card class="admin-card" :bordered="false">
         <div class="panel-header">
           <div>
             <h2>JSON 导入</h2>
@@ -281,27 +298,23 @@ onMounted(() => {
         <div class="form-grid single">
           <label class="field">
             <span>范围</span>
-            <select v-model="importType" class="select">
-              <option value="all">全部</option>
-              <option value="accounts">账号数据</option>
-              <option value="preferences">偏好设置</option>
-            </select>
+            <n-select v-model:value="importType" :options="backupTypeOptions" />
           </label>
           <label class="field">
             <span>文件</span>
-            <input class="input" type="file" accept="application/json,.json" @change="selectImportFile" />
+            <input class="native-input" type="file" accept="application/json,.json" @change="selectImportFile" />
           </label>
           <p v-if="importFileName" class="muted mono">{{ importFileName }}</p>
           <div class="form-actions">
-            <button class="btn btn-primary" type="button" :disabled="loading || !importDocument" @click="importJson">
+            <n-button type="primary" attr-type="button" :disabled="loading || !importDocument" @click="importJson">
               {{ loading ? '处理中' : '导入 JSON' }}
-            </button>
+            </n-button>
           </div>
         </div>
-      </div>
+      </n-card>
     </div>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>WebDAV 备份</h2>
@@ -310,77 +323,70 @@ onMounted(() => {
       </div>
       <form class="form-grid" @submit.prevent="saveWebdavConfig">
         <label class="check-row">
-          <input v-model="webdavForm.enabled" type="checkbox" />
-          <span>启用 WebDAV</span>
+          <n-checkbox v-model:checked="webdavForm.enabled">启用 WebDAV</n-checkbox>
         </label>
         <label class="check-row">
-          <input v-model="webdavForm.autoSyncEnabled" type="checkbox" />
-          <span>自动导出</span>
+          <n-checkbox v-model:checked="webdavForm.autoSyncEnabled">自动导出</n-checkbox>
         </label>
         <label class="field">
           <span>自动导出 Cron</span>
-          <input v-model="webdavForm.autoSyncCron" class="input" placeholder="0 */6 * * *" />
+          <n-input v-model:value="webdavForm.autoSyncCron" placeholder="0 */6 * * *" />
         </label>
         <label class="field wide">
           <span>文件 URL</span>
-          <input v-model="webdavForm.fileUrl" class="input" placeholder="https://example.com/dav/a2api-backup.json" />
+          <n-input v-model:value="webdavForm.fileUrl" placeholder="https://example.com/dav/a2api-backup.json" />
         </label>
         <label class="field">
           <span>用户名</span>
-          <input v-model="webdavForm.username" class="input" autocomplete="username" />
+          <n-input v-model:value="webdavForm.username" autocomplete="username" />
         </label>
         <label class="field">
           <span>密码</span>
-          <input v-model="webdavForm.password" class="input" type="password" autocomplete="current-password" placeholder="留空则保留" />
+          <n-input v-model:value="webdavForm.password" type="password" autocomplete="current-password" placeholder="留空则保留" />
           <span class="muted">当前：{{ webdavPasswordMasked || '未设置' }}</span>
         </label>
         <label class="field">
           <span>默认范围</span>
-          <select v-model="webdavForm.exportType" class="select">
-            <option value="all">全部</option>
-            <option value="accounts">账号数据</option>
-            <option value="preferences">偏好设置</option>
-          </select>
+          <n-select v-model:value="webdavForm.exportType" :options="backupTypeOptions" />
         </label>
         <label class="check-row">
-          <input v-model="webdavForm.clearPassword" type="checkbox" />
-          <span>清空密码</span>
+          <n-checkbox v-model:checked="webdavForm.clearPassword">清空密码</n-checkbox>
         </label>
         <div class="form-actions wide">
-          <button class="btn btn-primary" type="submit" :disabled="webdavLoading">
+          <n-button type="primary" attr-type="submit" :disabled="webdavLoading">
             {{ webdavLoading ? '处理中' : '保存 WebDAV' }}
-          </button>
-          <button class="btn btn-secondary" type="button" :disabled="webdavLoading" @click="loadWebdavConfig">刷新</button>
-          <button class="btn btn-secondary" type="button" :disabled="webdavLoading" @click="exportWebdav">导出到 WebDAV</button>
-          <button class="btn btn-secondary" type="button" :disabled="webdavLoading" @click="importWebdav">从 WebDAV 导入</button>
+          </n-button>
+          <n-button secondary attr-type="button" :disabled="webdavLoading" @click="loadWebdavConfig">刷新</n-button>
+          <n-button secondary attr-type="button" :disabled="webdavLoading" @click="exportWebdav">导出到 WebDAV</n-button>
+          <n-button secondary attr-type="button" :disabled="webdavLoading" @click="importWebdav">从 WebDAV 导入</n-button>
         </div>
       </form>
       <p class="muted">上次同步：{{ webdavState.lastSyncAt || '-' }}</p>
-      <p v-if="webdavState.lastError" class="error">WebDAV 错误：{{ webdavState.lastError }}</p>
-    </div>
+      <n-alert v-if="webdavState.lastError" type="error" :bordered="false">WebDAV 错误：{{ webdavState.lastError }}</n-alert>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>外部工具配置</h2>
           <p class="muted">生成客户端接入片段，密钥只在浏览器本地替换。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="clientConfigLoading" @click="loadClientConfigs">
+        <n-button secondary attr-type="button" :disabled="clientConfigLoading" @click="loadClientConfigs">
           {{ clientConfigLoading ? '生成中' : '重新生成' }}
-        </button>
+        </n-button>
       </div>
       <div class="form-grid">
         <label class="field">
           <span>服务地址</span>
-          <input v-model="clientConfigForm.baseUrl" class="input" placeholder="https://your-domain.com" />
+          <n-input v-model:value="clientConfigForm.baseUrl" placeholder="https://your-domain.com" />
         </label>
         <label class="field">
           <span>默认模型</span>
-          <input v-model="clientConfigForm.model" class="input" placeholder="从 /v1/models 选择" />
+          <n-input v-model:value="clientConfigForm.model" placeholder="从 /v1/models 选择" />
         </label>
         <label class="field">
           <span>API Key</span>
-          <input v-model="clientConfigForm.apiKey" class="input" type="password" placeholder="留空使用占位符" />
+          <n-input v-model:value="clientConfigForm.apiKey" type="password" placeholder="留空使用占位符" />
         </label>
       </div>
       <div class="client-config-list">
@@ -399,18 +405,18 @@ onMounted(() => {
           <div v-for="file in item.files" :key="`${item.id}-${file.filename}`" class="client-config-file">
             <div class="client-config-file-title">
               <span>{{ file.filename }}</span>
-              <button class="btn btn-secondary" type="button" @click="copyClientConfig(file.content)">复制</button>
+              <n-button secondary attr-type="button" @click="copyClientConfig(file.content)">复制</n-button>
             </div>
             <pre>{{ renderClientConfig(file.content) }}</pre>
           </div>
         </div>
       </div>
-    </div>
+    </n-card>
 
-    <p v-if="message" class="notice">{{ message }}</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+    <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
 
-    <div v-if="importResult" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="importResult">
       <div class="panel-header">
         <h2>导入结果</h2>
       </div>
@@ -421,7 +427,7 @@ onMounted(() => {
         </div>
       </div>
       <div v-if="importResult.warnings.length > 0" class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>警告</th>
@@ -432,9 +438,9 @@ onMounted(() => {
               <td>{{ item }}</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>
 

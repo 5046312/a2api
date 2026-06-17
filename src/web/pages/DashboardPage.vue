@@ -13,9 +13,9 @@ const cards = computed(() => {
   return [
     { label: '今日请求数', value: data ? formatInteger(data.todayRequests) : '-' },
     { label: '今日成功率', value: data ? formatPercent(data.todaySuccessRate) : '-' },
-    { label: '今日 token', value: data ? formatInteger(data.todayTokens) : '-' },
+    { label: '今日用量', value: data ? formatInteger(data.todayTokens) : '-' },
     { label: '今日费用', value: data ? formatCost(data.todayCost) : '-' },
-    { label: '活跃站点数', value: data ? formatInteger(data.activeSiteCount) : '-' },
+    { label: '活跃上游数', value: data ? formatInteger(data.activeSiteCount) : '-' },
     { label: '异常账号数', value: data ? formatInteger(data.abnormalAccountCount) : '-' }
   ];
 });
@@ -63,77 +63,61 @@ onMounted(loadOverview);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>运行总览</h2>
-          <p class="muted">今日统计按服务端本地日期计算。</p>
-        </div>
-        <div class="actions">
-          <button class="btn btn-secondary" type="button" :disabled="loading" @click="loadOverview">
-            {{ loading ? '刷新中' : '刷新' }}
-          </button>
-        </div>
-      </div>
-      <p v-if="error" class="error">{{ error }}</p>
-      <div class="stats-grid">
-        <div v-for="card in cards" :key="card.label" class="stat-card">
-          <span class="stat-label">{{ card.label }}</span>
-          <strong class="stat-value">{{ card.value }}</strong>
-        </div>
-      </div>
-    </div>
+    <n-card title="运行总览" :bordered="false">
+      <template #header-extra>
+        <n-button secondary :loading="loading" @click="loadOverview">刷新</n-button>
+      </template>
+      <p class="muted">今日统计按服务端本地日期计算。</p>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+      <n-grid class="stats-grid" :cols="3" :x-gap="12" :y-gap="12" responsive="screen">
+        <n-gi v-for="card in cards" :key="card.label">
+          <n-card class="stat-card" size="small" :bordered="false">
+            <n-statistic :label="card.label" :value="card.value" />
+          </n-card>
+        </n-gi>
+      </n-grid>
+    </n-card>
 
     <div class="two-column">
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>站点调用趋势</h2>
-            <p class="muted">最近 7 天按天聚合。</p>
-          </div>
-        </div>
+      <n-card title="上游调用趋势" :bordered="false">
+        <p class="muted">最近 7 天按天聚合。</p>
         <div class="table-wrap">
-          <table class="data-table">
+          <n-table size="small" :bordered="false" single-line class="admin-table">
             <thead>
               <tr>
                 <th>日期</th>
-                <th>站点</th>
+                <th>上游地址</th>
                 <th>请求</th>
                 <th>成功率</th>
-                <th>Token</th>
+                <th>用量</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in recentSiteUsage" :key="`${item.bucket}-${item.siteId || 0}`">
                 <td class="mono">{{ item.bucket }}</td>
-                <td>{{ item.siteName || '未知站点' }}</td>
+                <td>{{ item.siteName || '未知上游' }}</td>
                 <td>{{ formatInteger(item.requests) }}</td>
                 <td>{{ formatPercent(item.successRate) }}</td>
                 <td>{{ formatInteger(item.totalTokens) }}</td>
               </tr>
               <tr v-if="!loading && recentSiteUsage.length === 0">
-                <td class="empty" colspan="5">暂无站点统计</td>
+                <td class="empty" colspan="5">暂无上游统计</td>
               </tr>
             </tbody>
-          </table>
+          </n-table>
         </div>
-      </div>
+      </n-card>
 
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>模型 token 总量</h2>
-            <p class="muted">最近 7 天按模型聚合。</p>
-          </div>
-        </div>
+      <n-card title="模型用量总量" :bordered="false">
+        <p class="muted">最近 7 天按模型聚合。</p>
         <div class="table-wrap">
-          <table class="data-table">
+          <n-table size="small" :bordered="false" single-line class="admin-table">
             <thead>
               <tr>
                 <th>模型</th>
                 <th>请求</th>
                 <th>成功率</th>
-                <th>Token</th>
+                <th>用量</th>
                 <th>平均耗时</th>
               </tr>
             </thead>
@@ -149,9 +133,9 @@ onMounted(loadOverview);
                 <td class="empty" colspan="5">暂无模型统计</td>
               </tr>
             </tbody>
-          </table>
+          </n-table>
         </div>
-      </div>
+      </n-card>
     </div>
   </section>
 </template>

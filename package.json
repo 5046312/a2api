@@ -24,11 +24,16 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
+    "@vicons/ionicons5": "^0.13.0",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.4",
+    "naive-ui": "^2.44.1",
     "undici": "^6.25.0",
+    "unplugin-auto-import": "^21.0.0",
+    "unplugin-vue-components": "^32.1.0",
+    "vfonts": "^0.0.3",
     "vue": "^3.5.38",
     "zod": "^4.4.3"
   },

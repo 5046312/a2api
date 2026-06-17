@@ -4,6 +4,7 @@ import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
 import { isModelDisabled } from '../shared/modelMatch.js';
 import { nowIso } from '../shared/time.js';
+import { resolveDefaultAccountCredential } from './accountTokenService.js';
 import { GLOBAL_ROUTING_POLICY, isCredentialAllowed, isModelAllowedByPolicy, type DownstreamRoutingPolicy } from './downstreamPolicy.js';
 
 export type SelectedChannel = {
@@ -367,10 +368,22 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
     .orderBy(asc(schema.routeChannels.priority), desc(schema.routeChannels.weight), asc(schema.routeChannels.id))
     .all();
   const disabledBySiteId = await loadDisabledModelsBySiteId();
-  return rows.map((row) => ({
+  const rowsWithCredentials = await Promise.all(rows.map(resolveAccountLevelCredential));
+  return rowsWithCredentials.map((row) => ({
     ...row,
     siteDisabledModels: disabledBySiteId.get(row.siteId) || []
   }));
+}
+
+async function resolveAccountLevelCredential(row: Omit<CandidateRow, 'siteDisabledModels'>): Promise<Omit<CandidateRow, 'siteDisabledModels'>> {
+  if (row.tokenId !== null || row.tokenValue || row.accountApiToken) return row;
+  const credential = await resolveDefaultAccountCredential(row.accountId, { apiToken: row.accountApiToken });
+  if (!credential) return row;
+  return {
+    ...row,
+    accountApiToken: credential.token,
+    tokenName: row.tokenName || 'default'
+  };
 }
 
 async function loadDisabledModelsBySiteId(): Promise<Map<number, string[]>> {

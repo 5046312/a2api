@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useDialog } from 'naive-ui';
 import { api, type OAuthConnectionInfo, type OAuthConnectionsResponse, type OAuthProviderInfo, type OAuthProvidersResponse, type OAuthSessionInfo } from '@web/api';
 
 const data = ref<OAuthProvidersResponse | null>(null);
@@ -13,6 +14,7 @@ const connectionsError = ref('');
 const message = ref('');
 const callbackUrl = ref('');
 const importPayload = ref('');
+const dialog = useDialog();
 
 const providers = computed(() => data.value?.providers || []);
 const connectionItems = computed(() => connections.value?.items || []);
@@ -36,14 +38,14 @@ async function loadConnections() {
   try {
     connections.value = await api.getOAuthConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '加载 OAuth 连接失败';
+    connectionsError.value = err instanceof Error ? err.message : '加载 OAuth 账号失败';
   } finally {
     connectionsLoading.value = false;
   }
 }
 
 function formatConnectionIdentity(connection: { email: string | null; username: string | null; accountKey: string | null }) {
-  return connection.email || connection.username || connection.accountKey || '未命名连接';
+  return connection.email || connection.username || connection.accountKey || '未命名账号';
 }
 
 async function startProvider(provider: OAuthProviderInfo) {
@@ -99,10 +101,10 @@ async function toggleConnection(connection: OAuthConnectionInfo) {
   message.value = '';
   try {
     await api.updateOAuthConnection(connection.accountId, { enabled: !connection.enabled });
-    message.value = `OAuth 连接已${connection.enabled ? '停用' : '启用'}`;
+    message.value = `OAuth 账号已${connection.enabled ? '停用' : '启用'}`;
     await loadConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '更新 OAuth 连接失败';
+    connectionsError.value = err instanceof Error ? err.message : '更新 OAuth 账号失败';
   } finally {
     mutatingConnectionId.value = null;
   }
@@ -110,19 +112,26 @@ async function toggleConnection(connection: OAuthConnectionInfo) {
 
 async function removeConnection(connection: OAuthConnectionInfo) {
   const name = formatConnectionIdentity(connection);
-  if (!window.confirm(`删除 OAuth 连接 ${name}？`)) return;
-  mutatingConnectionId.value = connection.accountId;
-  connectionsError.value = '';
-  message.value = '';
-  try {
-    await api.deleteOAuthConnection(connection.accountId);
-    message.value = 'OAuth 连接已删除';
-    await loadConnections();
-  } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '删除 OAuth 连接失败';
-  } finally {
-    mutatingConnectionId.value = null;
-  }
+  dialog.warning({
+    title: '确认操作',
+    content: `删除 OAuth 账号 ${name}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      mutatingConnectionId.value = connection.accountId;
+      connectionsError.value = '';
+      message.value = '';
+      try {
+        await api.deleteOAuthConnection(connection.accountId);
+        message.value = 'OAuth 账号已删除';
+        await loadConnections();
+      } catch (err) {
+        connectionsError.value = err instanceof Error ? err.message : '删除 OAuth 账号失败';
+      } finally {
+        mutatingConnectionId.value = null;
+      }
+    }
+  });
 }
 
 async function refreshConnection(connection: OAuthConnectionInfo) {
@@ -131,10 +140,10 @@ async function refreshConnection(connection: OAuthConnectionInfo) {
   message.value = '';
   try {
     await api.refreshOAuthConnection(connection.accountId);
-    message.value = 'OAuth 连接已刷新';
+    message.value = 'OAuth 账号已刷新';
     await loadConnections();
   } catch (err) {
-    connectionsError.value = err instanceof Error ? err.message : '刷新 OAuth 连接失败';
+    connectionsError.value = err instanceof Error ? err.message : '刷新 OAuth 账号失败';
   } finally {
     mutatingConnectionId.value = null;
   }
@@ -162,22 +171,22 @@ onMounted(async () => {
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>OAuth Provider</h2>
           <p class="muted">当前支持 provider 元数据、本地 session 和手动 callback 初版。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="loading" @click="loadProviders">
+        <n-button secondary attr-type="button" :disabled="loading" @click="loadProviders">
           {{ loading ? '刷新中' : '刷新' }}
-        </button>
+        </n-button>
       </div>
 
       <p class="muted">系统代理：{{ systemProxyStatus }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div v-if="loading" class="empty">加载中</div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>Provider</th>
@@ -199,24 +208,24 @@ onMounted(async () => {
               <td>{{ provider.requiresProjectId ? '需要' : '不需要' }}</td>
               <td>
                 <div class="model-list">
-                  <span v-if="provider.supportsDirectAccountRouting" class="badge">直接路由</span>
-                  <span v-if="provider.supportsCloudValidation" class="badge">云端校验</span>
-                  <span v-if="provider.supportsNativeProxy" class="badge">原生代理</span>
+                  <n-tag v-if="provider.supportsDirectAccountRouting" size="small">直接路由</n-tag>
+                  <n-tag v-if="provider.supportsCloudValidation" size="small">云端校验</n-tag>
+                  <n-tag v-if="provider.supportsNativeProxy" size="small">原生代理</n-tag>
                 </div>
               </td>
               <td>
-                <button class="text-btn" type="button" :disabled="loading" @click="startProvider(provider)">发起</button>
+                <n-button text attr-type="button" :disabled="loading" @click="startProvider(provider)">发起</n-button>
               </td>
             </tr>
             <tr v-if="providers.length === 0">
               <td colspan="6" class="empty">暂无 Provider</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>授权会话</h2>
@@ -228,38 +237,38 @@ onMounted(async () => {
         <p class="muted">授权地址：<span class="mono">{{ session.authorizationUrl }}</span></p>
         <label class="field">
           <span>Callback URL</span>
-          <textarea v-model="callbackUrl" class="textarea" rows="3" placeholder="粘贴包含 access_token/token/api_key 的 callback URL"></textarea>
+          <n-input type="textarea" v-model:value="callbackUrl" :rows="3" placeholder="粘贴包含 access_token/token/api_key 的 callback URL"></n-input>
         </label>
-        <button class="btn btn-secondary" type="button" :disabled="loading || !callbackUrl.trim()" @click="completeSession">提交 Callback</button>
+        <n-button secondary attr-type="button" :disabled="loading || !callbackUrl.trim()" @click="completeSession">提交 Callback</n-button>
       </div>
       <label class="field">
         <span>导入 OAuth JSON</span>
-        <textarea v-model="importPayload" class="textarea" rows="4" placeholder='{"provider":"codex","accessToken":"..."}'></textarea>
+        <n-input type="textarea" v-model:value="importPayload" :rows="4" placeholder='{"provider":"codex","accessToken":"..."}'></n-input>
       </label>
-      <button class="btn btn-secondary" type="button" :disabled="loading || !importPayload.trim()" @click="importCredentials">导入凭证</button>
-    </div>
+      <n-button secondary attr-type="button" :disabled="loading || !importPayload.trim()" @click="importCredentials">导入凭证</n-button>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
-          <h2>OAuth 连接</h2>
-          <p class="muted">当前读取账号表中的 OAuth 连接，支持本地刷新、quota 和删除。</p>
+          <h2>OAuth 账号</h2>
+          <p class="muted">当前读取账号表中的 OAuth 账号，支持本地刷新、quota 和删除。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="connectionsLoading" @click="loadConnections">
+        <n-button secondary attr-type="button" :disabled="connectionsLoading" @click="loadConnections">
           {{ connectionsLoading ? '刷新中' : '刷新' }}
-        </button>
+        </n-button>
       </div>
 
-      <p v-if="connectionsError" class="error">{{ connectionsError }}</p>
-      <p v-if="message" class="notice">{{ message }}</p>
+      <n-alert v-if="connectionsError" type="error" :bordered="false">{{ connectionsError }}</n-alert>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
       <div v-if="connectionsLoading" class="empty">加载中</div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>账号</th>
               <th>Provider</th>
-              <th>站点</th>
+              <th>上游地址</th>
               <th>状态</th>
               <th>模型</th>
               <th>通道</th>
@@ -280,9 +289,9 @@ onMounted(async () => {
                 <p v-if="connection.site" class="muted mono">{{ connection.site.platform }}</p>
               </td>
               <td>
-                <span class="badge" :class="connection.status === 'healthy' ? 'success' : 'failed'">
+                <n-tag size="small" :type="connection.status === 'healthy' ? 'success' : 'error'">
                   {{ connection.status === 'healthy' ? '正常' : '异常' }}
-                </span>
+                </n-tag>
                 <p class="muted mono">{{ connection.accountStatus }}</p>
               </td>
               <td>
@@ -296,46 +305,46 @@ onMounted(async () => {
               <td class="mono">{{ connection.projectId || '-' }}</td>
               <td class="mono">{{ connection.proxyUrl || '-' }}</td>
               <td class="actions">
-                <button
-                  class="text-btn"
-                  type="button"
+                <n-button text
+                 
+                  attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="toggleConnection(connection)"
                 >
                   {{ connection.enabled ? '停用' : '启用' }}
-                </button>
-                <button
-                  class="text-btn"
-                  type="button"
+                </n-button>
+                <n-button text
+                 
+                  attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="refreshConnection(connection)"
                 >
                   刷新
-                </button>
-                <button
-                  class="text-btn"
-                  type="button"
+                </n-button>
+                <n-button text
+                 
+                  attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="refreshQuota(connection)"
                 >
                   Quota
-                </button>
-                <button
-                  class="text-btn danger"
-                  type="button"
+                </n-button>
+                <n-button type="error" text
+                 
+                  attr-type="button"
                   :disabled="mutatingConnectionId === connection.accountId"
                   @click="removeConnection(connection)"
                 >
                   删除
-                </button>
+                </n-button>
               </td>
             </tr>
             <tr v-if="connectionItems.length === 0">
-              <td colspan="9" class="empty">暂无 OAuth 连接</td>
+              <td colspan="9" class="empty">暂无 OAuth 账号</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

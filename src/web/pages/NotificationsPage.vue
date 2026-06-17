@@ -95,45 +95,43 @@ onMounted(loadSettings);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>通知设置</h2>
           <p class="muted">当前支持通用 Webhook，敏感地址只返回脱敏值。</p>
         </div>
-        <button class="btn btn-secondary" type="button" :disabled="loading" @click="loadSettings">
+        <n-button secondary attr-type="button" :disabled="loading" @click="loadSettings">
           {{ loading ? '刷新中' : '刷新' }}
-        </button>
+        </n-button>
       </div>
 
       <form class="form-grid single" @submit.prevent="saveSettings">
         <label class="check-row">
-          <input v-model="form.webhookEnabled" type="checkbox" />
-          <span>启用 Webhook 通知</span>
+          <n-checkbox v-model:checked="form.webhookEnabled">启用 Webhook 通知</n-checkbox>
         </label>
         <label class="field">
           <span>Webhook URL</span>
-          <input v-model="form.webhookUrl" class="input" placeholder="留空保留已保存地址" />
+          <n-input v-model:value="form.webhookUrl" placeholder="留空保留已保存地址" />
         </label>
         <label class="check-row">
-          <input v-model="form.clearWebhookUrl" type="checkbox" />
-          <span>清空已保存 Webhook URL</span>
+          <n-checkbox v-model:checked="form.clearWebhookUrl">清空已保存 Webhook URL</n-checkbox>
         </label>
         <label class="field">
           <span>通知冷静期（秒）</span>
-          <input v-model.number="form.notifyCooldownSec" class="input" min="0" type="number" />
+          <n-input-number v-model:value="form.notifyCooldownSec" :min="0" />
         </label>
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? '保存中' : '保存设置' }}</button>
-          <button class="btn btn-secondary" type="button" :disabled="saving" @click="sendTest">测试通知</button>
+          <n-button type="primary" attr-type="submit" :disabled="saving">{{ saving ? '保存中' : '保存设置' }}</n-button>
+          <n-button secondary attr-type="button" :disabled="saving" @click="sendTest">测试通知</n-button>
         </div>
       </form>
 
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-    </div>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>当前状态</h2>
@@ -148,6 +146,6 @@ onMounted(loadSettings);
           <span class="setting-note">{{ row.note }}</span>
         </article>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

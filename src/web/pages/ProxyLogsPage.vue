@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyLog, type Site } from '@web/api';
 
 const sites = ref<Site[]>([]);
@@ -23,6 +23,32 @@ const filters = reactive({
   from: '',
   to: ''
 });
+const logStatusOptions = [
+  { label: '全部状态', value: '' },
+  { label: '成功', value: 'success' },
+  { label: '失败', value: 'failed' },
+  { label: '重试', value: 'retried' }
+];
+const streamOptions = [
+  { label: '全部请求', value: '' },
+  { label: '流式请求', value: 'true' },
+  { label: '非流式请求', value: 'false' }
+];
+const siteOptions = computed(() => [
+  { label: '全部上游地址', value: '' },
+  ...sites.value.map((site) => ({ label: site.name, value: String(site.id) }))
+]);
+const accountOptions = computed(() => [
+  { label: '全部账号', value: '' },
+  ...accounts.value.map((account) => ({
+    label: `${account.siteName || '-'} / ${account.username || `#${account.id}`}`,
+    value: String(account.id)
+  }))
+]);
+const downstreamKeyOptions = computed(() => [
+  { label: '全部下游 Key', value: '' },
+  ...downstreamKeys.value.map((key) => ({ label: key.name, value: String(key.id) }))
+]);
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -36,6 +62,13 @@ function formatJson(value: unknown) {
 
 function formatMs(value: number | null) {
   return value === null ? '-' : `${value}ms`;
+}
+
+function logStatusTagType(status: string) {
+  if (status === 'success') return 'success';
+  if (status === 'retried') return 'warning';
+  if (status === 'failed') return 'error';
+  return 'default';
 }
 
 async function loadPage() {
@@ -132,47 +165,32 @@ onMounted(loadPage);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>代理日志</h2>
           <p class="muted">查看 `/v1/*` 请求路由结果和错误。</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="loadLogs">刷新</button>
+        <n-button secondary attr-type="button" @click="loadLogs">刷新</n-button>
       </div>
       <div class="toolbar">
-        <select v-model="filters.status" class="select" @change="loadLogs">
-          <option value="">全部状态</option>
-          <option value="success">成功</option>
-          <option value="failed">失败</option>
-          <option value="retried">重试</option>
-        </select>
-        <select v-model="filters.siteId" class="select" @change="loadLogs">
-          <option value="">全部站点</option>
-          <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.name }}</option>
-        </select>
-        <select v-model="filters.accountId" class="select" @change="loadLogs">
-          <option value="">全部账号</option>
-          <option v-for="account in accounts" :key="account.id" :value="account.id">
-            {{ account.siteName || '-' }} / {{ account.username || `#${account.id}` }}
-          </option>
-        </select>
-        <select v-model="filters.downstreamApiKeyId" class="select" @change="loadLogs">
-          <option value="">全部下游 Key</option>
-          <option v-for="key in downstreamKeys" :key="key.id" :value="key.id">{{ key.name }}</option>
-        </select>
-        <input v-model="filters.model" class="input" placeholder="模型关键字" @keyup.enter="loadLogs" />
-        <select v-model="filters.isStream" class="select" @change="loadLogs">
-          <option value="">全部请求</option>
-          <option value="true">流式请求</option>
-          <option value="false">非流式请求</option>
-        </select>
-        <input v-model="filters.from" class="input" placeholder="起始 ISO 时间" @keyup.enter="loadLogs" />
-        <input v-model="filters.to" class="input" placeholder="结束 ISO 时间" @keyup.enter="loadLogs" />
+        <n-select v-model:value="filters.status" :options="logStatusOptions" class="toolbar-select" @update:value="loadLogs" />
+        <n-select v-model:value="filters.siteId" :options="siteOptions" class="toolbar-select" @update:value="loadLogs" />
+        <n-select v-model:value="filters.accountId" :options="accountOptions" class="toolbar-select" @update:value="loadLogs" />
+        <n-select
+          v-model:value="filters.downstreamApiKeyId"
+          :options="downstreamKeyOptions"
+          class="toolbar-select"
+          @update:value="loadLogs"
+        />
+        <n-input v-model:value="filters.model" placeholder="模型关键字" @keyup.enter="loadLogs" />
+        <n-select v-model:value="filters.isStream" :options="streamOptions" class="toolbar-select" @update:value="loadLogs" />
+        <n-input v-model:value="filters.from" placeholder="起始 ISO 时间" @keyup.enter="loadLogs" />
+        <n-input v-model:value="filters.to" placeholder="结束 ISO 时间" @keyup.enter="loadLogs" />
       </div>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>时间</th>
@@ -180,13 +198,13 @@ onMounted(loadPage);
               <th>HTTP</th>
               <th>请求模型</th>
               <th>实际模型</th>
-              <th>站点</th>
+              <th>上游地址</th>
               <th>账号</th>
               <th>通道</th>
               <th>下游 Key</th>
               <th>流式</th>
               <th>耗时</th>
-              <th>Token</th>
+              <th>用量</th>
               <th>费用</th>
               <th>错误</th>
               <th>操作</th>
@@ -195,7 +213,7 @@ onMounted(loadPage);
           <tbody>
             <tr v-for="log in logs" :key="log.id">
               <td class="mono">{{ log.createdAt }}</td>
-              <td><span class="badge" :class="log.status">{{ log.status }}</span></td>
+              <td><n-tag size="small" :type="logStatusTagType(log.status)">{{ log.status }}</n-tag></td>
               <td>{{ log.httpStatus || '-' }}</td>
               <td class="mono">{{ log.modelRequested || '-' }}</td>
               <td class="mono">{{ log.modelActual || '-' }}</td>
@@ -209,29 +227,29 @@ onMounted(loadPage);
               <td>{{ log.estimatedCost.toFixed(6) }}</td>
               <td class="error-cell">{{ log.errorMessage || '-' }}</td>
               <td>
-                <button class="text-btn" type="button" :disabled="loadingDetailId === log.id" @click="loadDetail(log)">
+                <n-button text attr-type="button" :disabled="loadingDetailId === log.id" @click="loadDetail(log)">
                   {{ loadingDetailId === log.id ? '加载中' : '详情' }}
-                </button>
+                </n-button>
               </td>
             </tr>
             <tr v-if="!loading && logs.length === 0">
               <td class="empty" colspan="15">暂无日志</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>Debug Trace</h2>
           <p class="muted">独立查看代理尝试、上游状态和失败原因。</p>
         </div>
-        <button class="btn btn-secondary" type="button" @click="loadTraces">刷新 Trace</button>
+        <n-button secondary attr-type="button" @click="loadTraces">刷新 Trace</n-button>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>时间</th>
@@ -256,18 +274,18 @@ onMounted(loadPage);
               <td>{{ trace.selectedChannelId || '-' }}</td>
               <td>{{ trace.attemptCount }}</td>
               <td>
-                <button class="text-btn" type="button" :disabled="loadingTrace" @click="loadTrace(trace.id)">详情</button>
+                <n-button text attr-type="button" :disabled="loadingTrace" @click="loadTrace(trace.id)">详情</n-button>
               </td>
             </tr>
             <tr v-if="traces.length === 0">
               <td class="empty" colspan="9">暂无 Trace</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div v-if="selectedLog" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="selectedLog">
       <div class="panel-header">
         <div>
           <h2>日志详情 #{{ selectedLog.id }}</h2>
@@ -275,7 +293,7 @@ onMounted(loadPage);
         </div>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <tbody>
             <tr>
               <th>时间</th>
@@ -284,7 +302,7 @@ onMounted(loadPage);
               <td>{{ selectedLog.routeId || '-' }} / {{ selectedLog.channelId || '-' }}</td>
             </tr>
             <tr>
-              <th>站点</th>
+              <th>上游地址</th>
               <td>{{ selectedLog.siteName || '-' }}</td>
               <th>账号</th>
               <td>{{ selectedLog.accountName || (selectedLog.accountId ? `#${selectedLog.accountId}` : '-') }}</td>
@@ -298,22 +316,21 @@ onMounted(loadPage);
             <tr>
               <th>Trace</th>
               <td colspan="3">
-                <button
+                <n-button text
                   v-if="selectedLog.debugTraceId"
-                  class="text-btn"
-                  type="button"
+                  attr-type="button"
                   :disabled="loadingTrace"
                   @click="loadTrace(selectedLog.debugTraceId)"
                 >
                   {{ loadingTrace ? '加载中' : `查看 Trace #${selectedLog.debugTraceId}` }}
-                </button>
+                </n-button>
                 <span v-else>-</span>
               </td>
             </tr>
             <tr>
-              <th>Prompt / Completion</th>
+              <th>输入 / 输出</th>
               <td>{{ selectedLog.promptTokens }} / {{ selectedLog.completionTokens }}</td>
-              <th>Cache Read / Write</th>
+              <th>缓存读 / 写</th>
               <td>{{ selectedLog.cacheReadTokens }} / {{ selectedLog.cacheWriteTokens }}</td>
             </tr>
             <tr>
@@ -331,11 +348,11 @@ onMounted(loadPage);
               <td colspan="3"><pre class="mono">{{ formatJson(selectedLog.billingDetails) }}</pre></td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div v-if="selectedTrace" class="panel">
+    <n-card class="admin-card" :bordered="false" v-if="selectedTrace">
       <div class="panel-header">
         <div>
           <h2>Debug Trace #{{ selectedTrace.id }}</h2>
@@ -343,7 +360,7 @@ onMounted(loadPage);
         </div>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>尝试</th>
@@ -365,8 +382,8 @@ onMounted(loadPage);
               <td class="empty" colspan="5">暂无尝试记录</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>

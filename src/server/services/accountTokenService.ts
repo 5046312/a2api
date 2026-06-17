@@ -21,6 +21,13 @@ type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type MutableAccountTokenRow = AccountTokenRow;
 
 const preservedLocalFields = ['name', 'tokenGroup', 'enabled', 'isDefault'] as const;
+const defaultAccountCredentialName = 'default';
+
+export type AccountApiCredential = {
+  token: string;
+  tokenId: number | null;
+  masked: string;
+};
 
 export function toAccountTokenView(row: AccountTokenRow & { accountName?: string | null; siteName?: string | null }) {
   return {
@@ -92,6 +99,72 @@ export async function createAccountToken(payload: AccountTokenPayload) {
   return toAccountTokenView(inserted);
 }
 
+export async function upsertDefaultAccountApiKey(accountId: number, apiKey: string | null | undefined): Promise<AccountApiCredential | null> {
+  const token = normalizeTokenValue(apiKey);
+  if (!token) return null;
+  const now = nowIso();
+  const current = await db
+    .select()
+    .from(schema.accountTokens)
+    .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.isDefault, true)))
+    .get();
+
+  await db.update(schema.accountTokens).set({ isDefault: false }).where(eq(schema.accountTokens.accountId, accountId)).run();
+  if (current) {
+    const updated = await db
+      .update(schema.accountTokens)
+      .set({
+        name: current.name || defaultAccountCredentialName,
+        token,
+        valueStatus: 'ready',
+        source: 'account_default',
+        enabled: true,
+        isDefault: true,
+        updatedAt: now
+      })
+      .where(eq(schema.accountTokens.id, current.id))
+      .returning()
+      .get();
+    return { token: updated.token, tokenId: updated.id, masked: maskSecret(updated.token) };
+  }
+
+  const inserted = await db
+    .insert(schema.accountTokens)
+    .values({
+      accountId,
+      name: defaultAccountCredentialName,
+      token,
+      valueStatus: 'ready',
+      source: 'account_default',
+      enabled: true,
+      isDefault: true,
+      localNameLocked: true,
+      localStatusLocked: true,
+      createdAt: now,
+      updatedAt: now
+    })
+    .returning()
+    .get();
+  return { token: inserted.token, tokenId: inserted.id, masked: maskSecret(inserted.token) };
+}
+
+export async function resolveDefaultAccountCredential(
+  accountId: number,
+  fallback: { apiToken?: string | null; accessToken?: string | null; includeAccessToken?: boolean } = {}
+): Promise<AccountApiCredential | null> {
+  const defaultToken = await findReadyAccountToken(accountId, true);
+  if (defaultToken) return { token: defaultToken.token, tokenId: defaultToken.id, masked: maskSecret(defaultToken.token) };
+
+  const readyToken = await findReadyAccountToken(accountId, false);
+  if (readyToken) return { token: readyToken.token, tokenId: readyToken.id, masked: maskSecret(readyToken.token) };
+
+  const legacyApiKey = normalizeTokenValue(fallback.apiToken);
+  if (legacyApiKey) return { token: legacyApiKey, tokenId: null, masked: maskSecret(legacyApiKey) };
+
+  const accessToken = fallback.includeAccessToken ? normalizeTokenValue(fallback.accessToken) : null;
+  return accessToken ? { token: accessToken, tokenId: null, masked: maskSecret(accessToken) } : null;
+}
+
 export async function updateAccountToken(id: number, payload: Partial<AccountTokenPayload>) {
   const current = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, id)).get();
   if (!current) return null;
@@ -141,6 +214,11 @@ export async function syncAccountTokens(accountId: number) {
     return syncAccountTokenSummary(existing);
   }
 
+  const credential = await resolveDefaultAccountCredential(accountId, {
+    apiToken: account.apiToken,
+    accessToken: account.accessToken,
+    includeAccessToken: true
+  });
   const upstreamTokens = await adapter.getApiTokens({
     siteId: site.id,
     baseUrl: site.url,
@@ -148,7 +226,7 @@ export async function syncAccountTokens(accountId: number) {
     proxyUrl: accountProxyUrl(account.extraConfig) || site.proxyUrl,
     customHeaders: parseJsonObject(site.customHeaders) as Record<string, string> | null,
     accessToken: account.accessToken,
-    apiToken: account.apiToken
+    apiToken: credential?.token ?? null
   });
 
   return syncAccountTokensFromUpstream(accountId, upstreamTokens, existing);
@@ -263,6 +341,22 @@ function normalizeTokenName(name: string | null | undefined, fallbackIndex: numb
 function normalizeTokenValue(token: string | null | undefined): string | null {
   const trimmed = (token || '').trim();
   return trimmed ? trimmed : null;
+}
+
+async function findReadyAccountToken(accountId: number, requireDefault: boolean): Promise<AccountTokenRow | null> {
+  const filters = [
+    eq(schema.accountTokens.accountId, accountId),
+    eq(schema.accountTokens.enabled, true),
+    eq(schema.accountTokens.valueStatus, 'ready')
+  ];
+  if (requireDefault) filters.push(eq(schema.accountTokens.isDefault, true));
+  const row = await db
+    .select()
+    .from(schema.accountTokens)
+    .where(and(...filters))
+    .orderBy(desc(schema.accountTokens.isDefault), desc(schema.accountTokens.id))
+    .get();
+  return row ?? null;
 }
 
 function normalizeTokenGroup(value: string | null | undefined): string | null {

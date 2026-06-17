@@ -1,45 +1,139 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
-import { api, type Account, type AccountBatchAction, type AccountToken, type Site } from '@web/api';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useDialog } from 'naive-ui';
+import { api, type Account, type AccountBatchAction } from '@web/api';
 
-const sites = ref<Site[]>([]);
+const defaultPlatformOptions = [
+  'openai',
+  'new-api',
+  'one-api',
+  'one-hub',
+  'done-hub',
+  'veloera',
+  'anyrouter',
+  'sub2api',
+  'cliproxyapi',
+  'claude',
+  'gemini',
+  'codex',
+  'gemini-cli',
+  'antigravity'
+];
+
+const openaiPresetModels = [
+  'gpt-5.2',
+  'gpt-5.4',
+  'gpt-5.5',
+  'gpt-5.3-codex',
+  'gpt-5.3-codex-spark',
+  'gpt-4o',
+  'gpt-4o-mini',
+  'gpt-4.1',
+  'o1',
+  'o3'
+];
+const claudePresetModels = [
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5',
+  'claude-haiku-4-5'
+];
+const geminiPresetModels = [
+  'gemini-3.1-flash-image',
+  'gemini-3-flash-preview',
+  'gemini-3-pro-preview',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash'
+];
+const antigravityPresetModels = [
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6-thinking',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5',
+  'gemini-3.1-pro-high',
+  'gemini-3.1-pro-low',
+  'gemini-3-flash',
+  'gemini-2.5-flash'
+];
+const openaiCompatiblePlatforms = new Set([
+  'openai',
+  'new-api',
+  'one-api',
+  'one-hub',
+  'done-hub',
+  'veloera',
+  'anyrouter',
+  'sub2api',
+  'cliproxyapi',
+  'codex'
+]);
+
 const accounts = ref<Account[]>([]);
-const tokens = ref<AccountToken[]>([]);
+const platformOptions = ref(defaultPlatformOptions);
 const loading = ref(false);
 const saving = ref(false);
+const detecting = ref(false);
+const verifying = ref(false);
 const refreshingBalanceId = ref<number | null>(null);
 const refreshingAllBalances = ref(false);
-const syncingTokenAccountId = ref<number | null>(null);
 const editingAccountId = ref<number | null>(null);
-const editingTokenId = ref<number | null>(null);
+const showAccountDrawer = ref(false);
+const showModelDrawer = ref(false);
+const showAdvanced = ref(false);
+const modelDrawerAccount = ref<Account | null>(null);
+const accountModels = ref<string[]>([]);
+const customModelName = ref('');
+const loadingModels = ref(false);
+const savingModels = ref(false);
+const syncingModels = ref(false);
+const modelDrawerError = ref('');
+const modelDrawerMessage = ref('');
 const selectedAccountIds = ref<number[]>([]);
-const selectedTokenIds = ref<number[]>([]);
 const error = ref('');
 const message = ref('');
+const dialog = useDialog();
 const accountForm = reactive({
-  siteId: 0,
-  username: '',
+  name: '',
+  baseUrl: '',
+  platform: 'openai',
+  apiKey: '',
   credentialMode: 'apikey',
-  apiToken: '',
   unitCost: '',
   proxyUrl: '',
+  useSystemProxy: false,
+  customHeadersText: '',
   status: 'active',
   isPinned: false,
   sortOrder: 0
 });
-const tokenForm = reactive({
-  accountId: 0,
-  name: '',
-  token: '',
-  tokenGroup: '',
-  enabled: true,
-  isDefault: false
+const accountPlatformOptions = computed(() => {
+  const current = accountForm.platform.trim();
+  if (!current || platformOptions.value.includes(current)) return platformOptions.value;
+  return [...platformOptions.value, current];
 });
-const tokenFilters = reactive({
-  accountId: 0,
-  enabled: 'all',
-  tokenGroup: ''
-});
+const accountPlatformSelectOptions = computed(() =>
+  accountPlatformOptions.value.map((platform) => ({ label: platform, value: platform }))
+);
+const accountStatusOptions = [
+  { label: '启用', value: 'active' },
+  { label: '停用', value: 'disabled' },
+  { label: '过期', value: 'expired' }
+];
+const credentialModeOptions = [
+  { label: 'API Key', value: 'apikey' },
+  { label: 'Session', value: 'session' },
+  { label: 'OAuth', value: 'oauth' },
+  { label: 'Auto', value: 'auto' }
+];
+const modelPresetOptions = computed(() =>
+  presetModelsForPlatform(modelDrawerAccount.value?.platform).filter((model) => !accountModels.value.includes(model))
+);
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -51,6 +145,23 @@ function formatNumber(value: number | null | undefined) {
 
 function formatTime(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : '-';
+}
+
+function accountLabel(account: Account) {
+  return account.name || account.username || account.baseUrl || `账号 ${account.id}`;
+}
+
+function modelActionLabel(account: Account) {
+  return account.modelCount > 0 ? `模型(${account.modelCount})` : '模型';
+}
+
+function presetModelsForPlatform(platform: string | null | undefined) {
+  const normalized = platform?.toLowerCase().trim() || '';
+  if (normalized === 'antigravity') return antigravityPresetModels;
+  if (normalized === 'gemini' || normalized === 'gemini-cli') return geminiPresetModels;
+  if (normalized === 'claude') return claudePresetModels;
+  if (openaiCompatiblePlatforms.has(normalized)) return openaiPresetModels;
+  return Array.from(new Set([...openaiPresetModels, ...claudePresetModels, ...geminiPresetModels]));
 }
 
 function batchAccountActionLabel(action: AccountBatchAction) {
@@ -77,10 +188,9 @@ function allVisibleAccountsSelected() {
   return accounts.value.length > 0 && accounts.value.every((account) => selectedAccountIds.value.includes(account.id));
 }
 
-function toggleAllVisibleAccounts(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
+function toggleAllVisibleAccounts() {
   const visibleIds = accounts.value.map((account) => account.id);
-  if (checked) {
+  if (!allVisibleAccountsSelected()) {
     selectedAccountIds.value = Array.from(new Set([...selectedAccountIds.value, ...visibleIds]));
   } else {
     selectedAccountIds.value = selectedAccountIds.value.filter((id) => !visibleIds.includes(id));
@@ -89,99 +199,235 @@ function toggleAllVisibleAccounts(event: Event) {
 
 function resetAccountForm() {
   editingAccountId.value = null;
-  accountForm.siteId = sites.value[0]?.id || 0;
-  accountForm.username = '';
+  showAdvanced.value = false;
+  accountForm.name = '';
+  accountForm.baseUrl = '';
+  accountForm.platform = 'openai';
+  accountForm.apiKey = '';
   accountForm.credentialMode = 'apikey';
-  accountForm.apiToken = '';
   accountForm.unitCost = '';
   accountForm.proxyUrl = '';
+  accountForm.useSystemProxy = false;
+  accountForm.customHeadersText = '';
   accountForm.status = 'active';
   accountForm.isPinned = false;
   accountForm.sortOrder = accounts.value.length;
+}
+
+function openCreateAccount() {
+  resetAccountForm();
+  error.value = '';
+  message.value = '';
+  showAccountDrawer.value = true;
+}
+
+function closeAccountDrawer() {
+  if (saving.value) return;
+  showAccountDrawer.value = false;
 }
 
 function editAccount(account: Account) {
   editingAccountId.value = account.id;
   error.value = '';
   message.value = '';
-  accountForm.siteId = account.siteId;
-  accountForm.username = account.username || '';
+  accountForm.name = account.name || account.username || '';
+  accountForm.baseUrl = account.baseUrl || '';
+  accountForm.platform = account.platform || 'openai';
   accountForm.credentialMode = account.credentialMode;
-  accountForm.apiToken = '';
+  accountForm.apiKey = '';
   accountForm.unitCost = account.unitCost === null ? '' : String(account.unitCost);
   accountForm.proxyUrl = account.proxyUrl || '';
+  accountForm.useSystemProxy = account.useSystemProxy;
+  accountForm.customHeadersText = account.customHeaders ? JSON.stringify(account.customHeaders, null, 2) : '';
   accountForm.status = account.status;
   accountForm.isPinned = account.isPinned;
   accountForm.sortOrder = account.sortOrder;
+  showAdvanced.value = true;
+  showAccountDrawer.value = true;
 }
 
-function resetTokenForm() {
-  editingTokenId.value = null;
-  tokenForm.accountId = accounts.value[0]?.id || 0;
-  tokenForm.name = '';
-  tokenForm.token = '';
-  tokenForm.tokenGroup = '';
-  tokenForm.enabled = true;
-  tokenForm.isDefault = false;
+function resetModelDrawer() {
+  modelDrawerAccount.value = null;
+  accountModels.value = [];
+  customModelName.value = '';
+  modelDrawerError.value = '';
+  modelDrawerMessage.value = '';
 }
 
-function tokenListQuery() {
-  const query: Record<string, string | number | boolean> = {};
-  if (tokenFilters.accountId) query.accountId = tokenFilters.accountId;
-  if (tokenFilters.enabled !== 'all') query.enabled = tokenFilters.enabled === 'true';
-  if (tokenFilters.tokenGroup.trim()) query.tokenGroup = tokenFilters.tokenGroup.trim();
-  return query;
+function closeModelDrawer() {
+  if (savingModels.value || syncingModels.value) return;
+  showModelDrawer.value = false;
 }
 
-function setTokenRows(items: AccountToken[]) {
-  tokens.value = items;
-  selectedTokenIds.value = selectedTokenIds.value.filter((id) => items.some((token) => token.id === id));
+function openModelDrawer(account: Account) {
+  modelDrawerAccount.value = account;
+  accountModels.value = [];
+  customModelName.value = '';
+  modelDrawerError.value = '';
+  modelDrawerMessage.value = '';
+  showModelDrawer.value = true;
+  void loadAccountModels(account.id);
 }
 
-async function loadTokens() {
-  loading.value = true;
-  error.value = '';
+async function loadAccountModels(accountId: number) {
+  loadingModels.value = true;
+  modelDrawerError.value = '';
   try {
-    const tokenData = await api.listTokens(tokenListQuery());
-    setTokenRows(tokenData.items);
+    const result = await api.listAccountModels(accountId);
+    accountModels.value = result.models;
   } catch (err) {
-    setError(err, '加载 Token 失败');
+    modelDrawerError.value = err instanceof Error ? err.message : '加载账号模型失败';
   } finally {
-    loading.value = false;
+    loadingModels.value = false;
   }
 }
 
-function editToken(token: AccountToken) {
-  editingTokenId.value = token.id;
-  error.value = '';
-  message.value = '';
-  tokenForm.accountId = token.accountId;
-  tokenForm.name = token.name;
-  tokenForm.token = '';
-  tokenForm.tokenGroup = token.tokenGroup || '';
-  tokenForm.enabled = token.enabled;
-  tokenForm.isDefault = token.isDefault;
+function addModel(model: string) {
+  const modelName = model.trim();
+  if (!modelName) return;
+  if (accountModels.value.includes(modelName)) {
+    modelDrawerMessage.value = '模型已存在';
+    return;
+  }
+  accountModels.value = [...accountModels.value, modelName];
+  customModelName.value = '';
+  modelDrawerMessage.value = '';
+}
+
+function removeModel(model: string) {
+  accountModels.value = accountModels.value.filter((item) => item !== model);
+}
+
+function clearModelDraft() {
+  accountModels.value = [];
+  modelDrawerMessage.value = '已清空当前模型草稿，保存后生效';
+}
+
+async function syncAccountModels() {
+  const account = modelDrawerAccount.value;
+  if (!account) return;
+  syncingModels.value = true;
+  modelDrawerError.value = '';
+  modelDrawerMessage.value = '';
+  try {
+    const refreshed = await api.refreshModels(account.id);
+    const result = await api.listAccountModels(account.id);
+    accountModels.value = result.models;
+    modelDrawerMessage.value = `同步完成：新增 ${refreshed.created}，更新 ${refreshed.updated}，移除 ${refreshed.removed}`;
+    await loadAll();
+  } catch (err) {
+    modelDrawerError.value = err instanceof Error ? err.message : '同步上游模型失败';
+  } finally {
+    syncingModels.value = false;
+  }
+}
+
+async function saveAccountModels() {
+  const account = modelDrawerAccount.value;
+  if (!account) return;
+  savingModels.value = true;
+  modelDrawerError.value = '';
+  modelDrawerMessage.value = '';
+  try {
+    const result = await api.updateAccountModels(account.id, accountModels.value);
+    accountModels.value = result.models;
+    message.value = `账号模型已保存：${result.models.length} 个`;
+    showModelDrawer.value = false;
+    await loadAll();
+  } catch (err) {
+    modelDrawerError.value = err instanceof Error ? err.message : '保存账号模型失败';
+  } finally {
+    savingModels.value = false;
+  }
 }
 
 async function loadAll() {
   loading.value = true;
   error.value = '';
   try {
-    const [siteData, accountData, tokenData] = await Promise.all([
-      api.listSites(),
-      api.listAccounts(),
-      api.listTokens(tokenListQuery())
-    ]);
-    sites.value = siteData.items;
+    const accountData = await api.listAccounts();
     accounts.value = accountData.items;
     selectedAccountIds.value = selectedAccountIds.value.filter((id) => accounts.value.some((account) => account.id === id));
-    setTokenRows(tokenData.items);
-    if (!accountForm.siteId) resetAccountForm();
-    if (!tokenForm.accountId) resetTokenForm();
   } catch (err) {
-    setError(err, '加载连接失败');
+    setError(err, '加载账号失败');
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadPlatformOptions() {
+  try {
+    const data = await api.getBrandList();
+    if (Array.isArray(data.brands) && data.brands.length > 0) {
+      platformOptions.value = data.brands;
+    }
+  } catch {
+    // 平台列表加载失败时保留默认选项，避免账号表单不可用。
+  }
+}
+
+function parseCustomHeaders(): Record<string, string> | null {
+  if (!accountForm.customHeadersText.trim()) return null;
+  const parsed = JSON.parse(accountForm.customHeadersText) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('自定义 Header 必须是 JSON 对象');
+  }
+  const headers: Record<string, string> = {};
+  Object.entries(parsed as Record<string, unknown>).forEach(([key, value]) => {
+    if (typeof value !== 'string') throw new Error('自定义 Header 的值必须是字符串');
+    headers[key] = value;
+  });
+  return headers;
+}
+
+async function detectPlatform() {
+  if (!accountForm.baseUrl.trim()) {
+    error.value = '请输入 Base URL';
+    return;
+  }
+  detecting.value = true;
+  error.value = '';
+  try {
+    const result = await api.detectSite(accountForm.baseUrl.trim());
+    if (result.platform) {
+      accountForm.platform = result.platform;
+      message.value = `已识别平台：${result.platform}`;
+    } else {
+      message.value = result.message;
+    }
+  } catch (err) {
+    setError(err, '检测平台失败');
+  } finally {
+    detecting.value = false;
+  }
+}
+
+async function verifyApiKey() {
+  const apiKey = accountForm.apiKey.trim();
+  if (!accountForm.baseUrl.trim() || !apiKey) {
+    error.value = '请先填写 Base URL 和 API Key';
+    return;
+  }
+  verifying.value = true;
+  error.value = '';
+  message.value = '';
+  try {
+    const payload: Record<string, unknown> = {
+      baseUrl: accountForm.baseUrl.trim(),
+      platform: accountForm.platform.trim(),
+      apiKey,
+      credentialMode: accountForm.credentialMode
+    };
+    if (showAdvanced.value) {
+      payload.proxyUrl = accountForm.proxyUrl.trim() || null;
+      payload.customHeaders = parseCustomHeaders();
+    }
+    const result = await api.verifyAccountToken(payload) as { ok?: boolean; models?: unknown[] };
+    message.value = result.ok ? `验证通过，发现 ${result.models?.length || 0} 个模型` : '验证完成，但未确认 API Key 类型';
+  } catch (err) {
+    setError(err, '验证 API Key 失败');
+  } finally {
+    verifying.value = false;
   }
 }
 
@@ -191,90 +437,42 @@ async function createAccount() {
   message.value = '';
   try {
     const payload: Record<string, unknown> = {
-      siteId: Number(accountForm.siteId),
-      username: accountForm.username.trim() || null,
+      name: accountForm.name.trim() || null,
+      baseUrl: accountForm.baseUrl.trim(),
+      platform: accountForm.platform.trim(),
       credentialMode: accountForm.credentialMode,
-      unitCost: accountForm.unitCost ? Number(accountForm.unitCost) : null,
-      proxyUrl: accountForm.proxyUrl.trim() || null,
-      status: accountForm.status,
-      isPinned: accountForm.isPinned,
-      sortOrder: Number(accountForm.sortOrder) || 0
+      status: accountForm.status
     };
-    const apiToken = accountForm.apiToken.trim();
+    if (showAdvanced.value) {
+      Object.assign(payload, {
+        unitCost: accountForm.unitCost ? Number(accountForm.unitCost) : null,
+        proxyUrl: accountForm.proxyUrl.trim() || null,
+        useSystemProxy: accountForm.useSystemProxy,
+        customHeaders: parseCustomHeaders(),
+        isPinned: accountForm.isPinned,
+        sortOrder: Number(accountForm.sortOrder) || 0
+      });
+    }
+    const apiKey = accountForm.apiKey.trim();
     if (editingAccountId.value) {
-      if (apiToken) payload.apiToken = apiToken;
+      if (apiKey) payload.apiKey = apiKey;
       await api.updateAccount(editingAccountId.value, payload);
       message.value = '账号已更新';
     } else {
-      payload.apiToken = apiToken || null;
+      if (!apiKey) {
+        error.value = '请输入 API Key';
+        return;
+      }
+      payload.apiKey = apiKey;
       await api.createAccount(payload);
       message.value = '账号已创建';
     }
-    resetAccountForm();
+    showAccountDrawer.value = false;
     await loadAll();
   } catch (err) {
-    setError(err, '创建账号失败');
+    setError(err, '保存账号失败');
   } finally {
     saving.value = false;
-  }
-}
-
-async function saveToken() {
-  saving.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    const tokenValue = tokenForm.token.trim();
-    const payload: Record<string, unknown> = {
-      name: tokenForm.name.trim(),
-      tokenGroup: tokenForm.tokenGroup.trim() || null,
-      enabled: tokenForm.enabled,
-      isDefault: tokenForm.isDefault
-    };
-    // 编辑时 Token 留空表示保留原值，避免误覆盖已保存密钥。
-    if (editingTokenId.value) {
-      if (tokenValue) payload.token = tokenValue;
-      await api.updateToken(editingTokenId.value, payload);
-      message.value = '账号 Token 已更新';
-    } else {
-      payload.accountId = Number(tokenForm.accountId);
-      payload.token = tokenValue;
-      await api.createToken(payload);
-      message.value = '账号 Token 已创建';
-    }
-    resetTokenForm();
-    await loadAll();
-  } catch (err) {
-    setError(err, '保存 Token 失败');
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function refreshModels(account: Account) {
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.refreshModels(account.id);
-    message.value = `模型刷新完成：新增 ${result.created}，更新 ${result.updated}`;
-  } catch (err) {
-    setError(err, '刷新模型失败');
-  }
-}
-
-async function syncTokens(account: Account) {
-  syncingTokenAccountId.value = account.id;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.syncAccountTokens(account.id);
-    const preservedFields = result.preservedLocalFields.join(', ');
-    message.value = `Token 同步完成：新增 ${result.created}，更新 ${result.updated}，待补全 ${result.maskedPending}，保留 ${preservedFields}`;
-    await loadAll();
-  } catch (err) {
-    setError(err, '同步 Token 失败');
-  } finally {
-    syncingTokenAccountId.value = null;
   }
 }
 
@@ -310,254 +508,246 @@ async function refreshAllBalances() {
   }
 }
 
-async function removeAccount(account: Account) {
-  if (!window.confirm(`删除账号 ${account.username || account.id}？`)) return;
-  error.value = '';
-  try {
-    await api.deleteAccount(account.id);
-    await loadAll();
-  } catch (err) {
-    setError(err, '删除账号失败');
-  }
+function confirmAction(content: string, onPositiveClick: () => Promise<void>) {
+  dialog.warning({
+    title: '确认操作',
+    content,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick
+  });
+}
+
+function removeAccount(account: Account) {
+  confirmAction(`删除账号 ${accountLabel(account)}？`, async () => {
+    error.value = '';
+    try {
+      await api.deleteAccount(account.id);
+      await loadAll();
+    } catch (err) {
+      setError(err, '删除账号失败');
+    }
+  });
 }
 
 async function batchUpdateAccounts(action: AccountBatchAction) {
   const ids = selectedAccountIds.value.slice();
   if (ids.length === 0) return;
-  if (!window.confirm(`批量${batchAccountActionLabel(action)} ${ids.length} 个账号？`)) return;
-  saving.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.batchUpdateAccounts(ids, action);
-    selectedAccountIds.value = [];
-    message.value = `批量${batchAccountActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
-    await loadAll();
-  } catch (err) {
-    setError(err, '批量更新账号失败');
-  } finally {
-    saving.value = false;
-  }
+  confirmAction(`批量${batchAccountActionLabel(action)} ${ids.length} 个账号？`, async () => {
+    saving.value = true;
+    error.value = '';
+    message.value = '';
+    try {
+      const result = await api.batchUpdateAccounts(ids, action);
+      selectedAccountIds.value = [];
+      message.value = `批量${batchAccountActionLabel(action)}完成：成功 ${result.successIds.length}，失败 ${result.failedItems.length}`;
+      await loadAll();
+    } catch (err) {
+      setError(err, '批量更新账号失败');
+    } finally {
+      saving.value = false;
+    }
+  });
 }
 
-async function toggleToken(token: AccountToken) {
-  error.value = '';
-  try {
-    await api.updateToken(token.id, { enabled: !token.enabled });
-    await loadAll();
-  } catch (err) {
-    setError(err, '更新 Token 失败');
-  }
-}
-
-function isTokenSelected(id: number) {
-  return selectedTokenIds.value.includes(id);
-}
-
-function toggleTokenSelection(id: number) {
-  selectedTokenIds.value = isTokenSelected(id)
-    ? selectedTokenIds.value.filter((item) => item !== id)
-    : [...selectedTokenIds.value, id];
-}
-
-function allVisibleTokensSelected() {
-  return tokens.value.length > 0 && tokens.value.every((token) => selectedTokenIds.value.includes(token.id));
-}
-
-function toggleAllVisibleTokens(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
-  const visibleIds = tokens.value.map((token) => token.id);
-  if (checked) {
-    selectedTokenIds.value = Array.from(new Set([...selectedTokenIds.value, ...visibleIds]));
-  } else {
-    selectedTokenIds.value = selectedTokenIds.value.filter((id) => !visibleIds.includes(id));
-  }
-}
-
-async function batchSetTokensEnabled(enabled: boolean) {
-  const ids = selectedTokenIds.value.slice();
-  if (ids.length === 0) return;
-  saving.value = true;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.batchSetTokensEnabled(ids, enabled);
-    message.value = `已批量${enabled ? '启用' : '停用'} ${result.updated} 个 Token`;
-    selectedTokenIds.value = [];
-    await loadTokens();
-  } catch (err) {
-    setError(err, '批量更新 Token 失败');
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function setDefaultToken(token: AccountToken) {
-  error.value = '';
-  try {
-    await api.updateToken(token.id, { isDefault: true });
-    await loadAll();
-  } catch (err) {
-    setError(err, '设置默认 Token 失败');
-  }
-}
-
-async function removeToken(token: AccountToken) {
-  if (!window.confirm(`删除 Token ${token.name}？`)) return;
-  error.value = '';
-  try {
-    await api.deleteToken(token.id);
-    await loadAll();
-  } catch (err) {
-    setError(err, '删除 Token 失败');
-  }
-}
-
-onMounted(loadAll);
+onMounted(() => {
+  void loadPlatformOptions();
+  void loadAll();
+});
 </script>
 
 <template>
   <section class="page-stack">
-    <div class="two-column">
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>{{ editingAccountId ? '编辑上游账号' : '上游账号' }}</h2>
-            <p class="muted">绑定站点 API 凭据。</p>
-          </div>
-        </div>
+    <n-drawer
+      v-model:show="showAccountDrawer"
+      placement="right"
+      width="min(760px, calc(100vw - 24px))"
+      :mask-closable="!saving"
+      :close-on-esc="!saving"
+      @after-leave="resetAccountForm"
+    >
+      <n-drawer-content :title="editingAccountId ? '编辑账号' : '新增账号'" :closable="!saving">
+        <p class="muted">维护账号的 Base URL 和 API Key。</p>
+        <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+        <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
         <form class="form-grid single" @submit.prevent="createAccount">
           <label class="field">
-            <span>站点</span>
-            <select v-model.number="accountForm.siteId" class="select" required>
-              <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.name }}</option>
-            </select>
+            <span>名称</span>
+            <n-input v-model:value="accountForm.name" placeholder="OpenAI 主账号" />
           </label>
           <label class="field">
-            <span>用户名</span>
-            <input v-model="accountForm.username" class="input" placeholder="可选" />
+            <span>Base URL</span>
+            <n-input v-model:value="accountForm.baseUrl" placeholder="https://api.openai.com" required />
           </label>
           <label class="field">
-            <span>凭据模式</span>
-            <select v-model="accountForm.credentialMode" class="select">
-              <option value="apikey">API Key</option>
-              <option value="session">Session</option>
-              <option value="oauth">OAuth</option>
-              <option value="auto">Auto</option>
-            </select>
+            <span>平台</span>
+            <n-select v-model:value="accountForm.platform" filterable :options="accountPlatformSelectOptions" />
           </label>
           <label class="field">
-            <span>API Token</span>
-            <input v-model="accountForm.apiToken" class="input" type="password" :placeholder="editingAccountId ? '留空则不修改' : ''" />
-          </label>
-          <label class="field">
-            <span>单位成本</span>
-            <input v-model="accountForm.unitCost" class="input" min="0" step="0.0001" type="number" placeholder="每 100 万 token" />
-          </label>
-          <label class="field">
-            <span>账号代理</span>
-            <input v-model="accountForm.proxyUrl" class="input" placeholder="http://127.0.0.1:7890" />
+            <span>API Key</span>
+            <n-input v-model:value="accountForm.apiKey" type="password" :required="!editingAccountId" :placeholder="editingAccountId ? '留空则不修改' : ''" />
           </label>
           <label class="field">
             <span>状态</span>
-            <select v-model="accountForm.status" class="select">
-              <option value="active">启用</option>
-              <option value="disabled">停用</option>
-              <option value="expired">过期</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>排序</span>
-            <input v-model.number="accountForm.sortOrder" class="input" min="0" step="1" type="number" />
+            <n-select v-model:value="accountForm.status" :options="accountStatusOptions" />
           </label>
           <label class="check-row">
-            <input v-model="accountForm.isPinned" type="checkbox" />
-            <span>置顶账号</span>
+            <n-checkbox v-model:checked="showAdvanced">显示高级配置</n-checkbox>
           </label>
+          <template v-if="showAdvanced">
+            <label class="field">
+              <span>凭据模式</span>
+              <n-select v-model:value="accountForm.credentialMode" :options="credentialModeOptions" />
+            </label>
+            <label class="field">
+              <span>单位成本</span>
+              <n-input v-model:value="accountForm.unitCost" placeholder="每 100 万用量单位" />
+            </label>
+            <label class="field">
+              <span>账号代理</span>
+              <n-input v-model:value="accountForm.proxyUrl" placeholder="http://127.0.0.1:7890" />
+            </label>
+            <label class="check-row">
+              <n-checkbox v-model:checked="accountForm.useSystemProxy">使用系统代理</n-checkbox>
+            </label>
+            <label class="field">
+              <span>自定义 Header</span>
+              <n-input type="textarea" v-model:value="accountForm.customHeadersText" :rows="4" placeholder='{"x-api-key":"value"}'></n-input>
+            </label>
+            <label class="field">
+              <span>排序</span>
+              <n-input-number v-model:value="accountForm.sortOrder" :min="0" :step="1" />
+            </label>
+            <label class="check-row">
+              <n-checkbox v-model:checked="accountForm.isPinned">置顶账号</n-checkbox>
+            </label>
+          </template>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit" :disabled="saving || sites.length === 0">
+            <n-button type="primary" attr-type="submit" :disabled="saving">
               {{ saving ? '保存中' : editingAccountId ? '保存修改' : '创建账号' }}
-            </button>
-            <button v-if="editingAccountId" class="btn btn-secondary" type="button" @click="resetAccountForm">取消编辑</button>
+            </n-button>
+            <n-button secondary attr-type="button" :disabled="detecting" @click="detectPlatform">
+              {{ detecting ? '检测中' : '检测平台' }}
+            </n-button>
+            <n-button secondary attr-type="button" :disabled="verifying" @click="verifyApiKey">
+              {{ verifying ? '验证中' : '验证 API Key' }}
+            </n-button>
+            <n-button secondary attr-type="button" :disabled="saving" @click="closeAccountDrawer">取消</n-button>
           </div>
         </form>
-      </div>
+      </n-drawer-content>
+    </n-drawer>
 
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>{{ editingTokenId ? '编辑账号 Token' : '账号 Token' }}</h2>
-            <p class="muted">为账号添加可路由 Token。</p>
+    <n-drawer
+      v-model:show="showModelDrawer"
+      placement="right"
+      width="min(820px, calc(100vw - 24px))"
+      :mask-closable="!savingModels && !syncingModels"
+      :close-on-esc="!savingModels && !syncingModels"
+      @after-leave="resetModelDrawer"
+    >
+      <n-drawer-content :title="modelDrawerAccount ? `账号模型：${accountLabel(modelDrawerAccount)}` : '账号模型'" :closable="!savingModels && !syncingModels">
+        <div class="model-drawer-stack">
+          <p class="muted">维护该账号固定可用模型。保存后会重建路由。</p>
+          <n-alert v-if="modelDrawerMessage" type="success" :bordered="false">{{ modelDrawerMessage }}</n-alert>
+          <n-alert v-if="modelDrawerError" type="error" :bordered="false">{{ modelDrawerError }}</n-alert>
+
+          <n-spin :show="loadingModels">
+            <section class="model-drawer-section">
+              <div class="panel-header">
+                <div>
+                  <h2>模型白名单</h2>
+                  <p class="muted">{{ accountModels.length }} 个模型</p>
+                </div>
+                <n-button secondary type="error" attr-type="button" :disabled="accountModels.length === 0" @click="clearModelDraft">清空所有模型</n-button>
+              </div>
+
+              <div v-if="accountModels.length > 0" class="model-chip-grid">
+                <div v-for="model in accountModels" :key="model" class="model-chip-item">
+                  <span class="model-chip-name">{{ model }}</span>
+                  <button class="model-chip-remove" type="button" @click="removeModel(model)">×</button>
+                </div>
+              </div>
+              <div v-else class="model-empty">暂无固定模型，保存空列表后该账号不会生成自动通道。</div>
+            </section>
+
+            <section class="model-drawer-section">
+              <label class="field">
+                <span>添加自定义模型</span>
+                <div class="model-input-row">
+                  <n-input v-model:value="customModelName" placeholder="gpt-5.5" @keydown.enter.prevent="addModel(customModelName)" />
+                  <n-button type="primary" attr-type="button" @click="addModel(customModelName)">添加</n-button>
+                </div>
+              </label>
+            </section>
+
+            <section class="model-drawer-section">
+              <div class="panel-header">
+                <div>
+                  <h2>平台预设</h2>
+                  <p class="muted">参考 sub2api 常用模型列表。</p>
+                </div>
+              </div>
+              <div v-if="modelPresetOptions.length > 0" class="preset-models">
+                <n-button
+                  v-for="model in modelPresetOptions"
+                  :key="model"
+                  secondary
+                  size="small"
+                  attr-type="button"
+                  @click="addModel(model)"
+                >
+                  + {{ model }}
+                </n-button>
+              </div>
+              <div v-else class="model-empty compact">当前平台预设都已添加。</div>
+            </section>
+          </n-spin>
+
+          <div class="model-drawer-footer">
+            <n-button secondary attr-type="button" :disabled="syncingModels || savingModels" @click="syncAccountModels">
+              {{ syncingModels ? '同步中' : '同步上游支持的模型' }}
+            </n-button>
+            <n-button type="primary" attr-type="button" :disabled="savingModels || syncingModels" @click="saveAccountModels">
+              {{ savingModels ? '保存中' : '保存模型' }}
+            </n-button>
+            <n-button secondary attr-type="button" :disabled="savingModels || syncingModels" @click="closeModelDrawer">取消</n-button>
           </div>
         </div>
-        <form class="form-grid single" @submit.prevent="saveToken">
-          <label class="field">
-            <span>账号</span>
-            <select v-model.number="tokenForm.accountId" class="select" :disabled="!!editingTokenId" required>
-              <option v-for="account in accounts" :key="account.id" :value="account.id">
-                {{ account.siteName || account.siteId }} / {{ account.username || account.id }}
-              </option>
-            </select>
-          </label>
-          <label class="field">
-            <span>名称</span>
-            <input v-model="tokenForm.name" class="input" required />
-          </label>
-          <label class="field">
-            <span>Token</span>
-            <input v-model="tokenForm.token" class="input" :required="!editingTokenId" type="password" :placeholder="editingTokenId ? '留空则不修改' : ''" />
-          </label>
-          <label class="field">
-            <span>分组</span>
-            <input v-model="tokenForm.tokenGroup" class="input" placeholder="可选" />
-          </label>
-          <label class="check-row">
-            <input v-model="tokenForm.enabled" type="checkbox" />
-            <span>启用</span>
-          </label>
-          <label class="check-row">
-            <input v-model="tokenForm.isDefault" type="checkbox" />
-            <span>默认 Token</span>
-          </label>
-          <div class="form-actions">
-            <button class="btn btn-primary" type="submit" :disabled="saving || accounts.length === 0">
-              {{ saving ? '保存中' : editingTokenId ? '保存修改' : '创建 Token' }}
-            </button>
-            <button v-if="editingTokenId" class="btn btn-secondary" type="button" @click="resetTokenForm">取消编辑</button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </n-drawer-content>
+    </n-drawer>
 
-    <p v-if="message" class="notice">{{ message }}</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <n-alert v-if="message && !showAccountDrawer" type="success" :bordered="false">{{ message }}</n-alert>
+    <n-alert v-if="error && !showAccountDrawer" type="error" :bordered="false">{{ error }}</n-alert>
 
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <h2>账号列表</h2>
         <div class="actions">
-          <button class="btn btn-secondary" type="button" :disabled="refreshingAllBalances" @click="refreshAllBalances">
+          <n-button type="primary" attr-type="button" @click="openCreateAccount">新增账号</n-button>
+          <n-button secondary attr-type="button" :disabled="refreshingAllBalances" @click="refreshAllBalances">
             {{ refreshingAllBalances ? '刷新中' : '刷新全部余额' }}
-          </button>
-          <button class="btn btn-secondary" type="button" @click="loadAll">刷新</button>
+          </n-button>
+          <n-button secondary attr-type="button" @click="loadAll">刷新</n-button>
         </div>
       </div>
       <div class="toolbar">
-        <button class="btn btn-secondary" type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('enable')">批量启用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('disable')">批量停用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('refreshBalance')">批量刷新余额</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('delete')">批量删除</button>
+        <n-button secondary attr-type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('enable')">批量启用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('disable')">批量停用</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('refreshBalance')">批量刷新余额</n-button>
+        <n-button secondary attr-type="button" :disabled="selectedAccountIds.length === 0 || saving" @click="batchUpdateAccounts('delete')">批量删除</n-button>
         <span class="muted">已选 {{ selectedAccountIds.length }}</span>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>
-                <input type="checkbox" :checked="allVisibleAccountsSelected()" :disabled="accounts.length === 0" @change="toggleAllVisibleAccounts" />
+                <n-checkbox :checked="allVisibleAccountsSelected()" :disabled="accounts.length === 0" @update:checked="toggleAllVisibleAccounts" />
               </th>
-              <th>站点</th>
-              <th>用户</th>
+              <th>账号</th>
+              <th>Base URL</th>
+              <th>平台</th>
               <th>模式</th>
               <th>状态</th>
               <th>余额</th>
@@ -566,110 +756,160 @@ onMounted(loadAll);
               <th>置顶</th>
               <th>最近刷新</th>
               <th>代理</th>
-              <th>Token</th>
+              <th>API Key</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="account in accounts" :key="account.id" :class="{ selected: isAccountSelected(account.id) }">
               <td>
-                <input type="checkbox" :checked="isAccountSelected(account.id)" @change="toggleAccountSelection(account.id)" />
+                <n-checkbox :checked="isAccountSelected(account.id)" @update:checked="toggleAccountSelection(account.id)" />
               </td>
-              <td>{{ account.siteName || account.siteId }}</td>
-              <td>{{ account.username || '-' }}</td>
+              <td>{{ accountLabel(account) }}</td>
+              <td class="mono">{{ account.baseUrl || '-' }}</td>
+              <td>{{ account.platform || '-' }}</td>
               <td>{{ account.credentialMode }}</td>
-              <td><span class="badge" :class="account.status">{{ account.status }}</span></td>
+              <td>
+                <n-tag
+                  size="small"
+                  :type="account.status === 'active' ? 'success' : account.status === 'expired' ? 'warning' : 'error'"
+                >
+                  {{ account.status }}
+                </n-tag>
+              </td>
               <td class="mono">{{ formatNumber(account.balance) }} / {{ formatNumber(account.quota) }}</td>
               <td class="mono">{{ account.unitCost ?? '-' }}</td>
               <td>{{ account.sortOrder }}</td>
               <td>{{ account.isPinned ? '是' : '否' }}</td>
               <td>{{ formatTime(account.lastBalanceRefresh) }}</td>
               <td class="mono">{{ account.proxyUrl || '-' }}</td>
-              <td class="mono">{{ account.apiTokenMasked }}</td>
+              <td class="mono">{{ account.apiKeyMasked || account.apiTokenMasked || '-' }}</td>
               <td class="actions">
-                <button class="text-btn" type="button" :disabled="refreshingBalanceId === account.id" @click="refreshBalance(account)">
+                <n-button text attr-type="button" :disabled="refreshingBalanceId === account.id" @click="refreshBalance(account)">
                   {{ refreshingBalanceId === account.id ? '刷新中' : '刷新余额' }}
-                </button>
-                <button class="text-btn" type="button" @click="refreshModels(account)">刷新模型</button>
-                <button class="text-btn" type="button" :disabled="syncingTokenAccountId === account.id" @click="syncTokens(account)">
-                  {{ syncingTokenAccountId === account.id ? '同步中' : '同步 Token' }}
-                </button>
-                <button class="text-btn" type="button" @click="editAccount(account)">编辑</button>
-                <button class="text-btn danger" type="button" @click="removeAccount(account)">删除</button>
+                </n-button>
+                <n-button text attr-type="button" @click="openModelDrawer(account)">{{ modelActionLabel(account) }}</n-button>
+                <n-button text attr-type="button" @click="editAccount(account)">编辑</n-button>
+                <n-button type="error" text attr-type="button" @click="removeAccount(account)">删除</n-button>
               </td>
             </tr>
             <tr v-if="!loading && accounts.length === 0">
-              <td class="empty" colspan="13">暂无账号</td>
+              <td class="empty" colspan="14">暂无账号</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2>Token 列表</h2>
-      </div>
-      <div class="toolbar">
-        <select v-model.number="tokenFilters.accountId" class="select">
-          <option :value="0">全部账号</option>
-          <option v-for="account in accounts" :key="account.id" :value="account.id">
-            {{ account.siteName || account.siteId }} / {{ account.username || account.id }}
-          </option>
-        </select>
-        <select v-model="tokenFilters.enabled" class="select">
-          <option value="all">全部状态</option>
-          <option value="true">启用</option>
-          <option value="false">停用</option>
-        </select>
-        <input v-model="tokenFilters.tokenGroup" class="input" placeholder="分组" />
-        <button class="btn btn-secondary" type="button" @click="loadTokens">筛选</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedTokenIds.length === 0 || saving" @click="batchSetTokensEnabled(true)">批量启用</button>
-        <button class="btn btn-secondary" type="button" :disabled="selectedTokenIds.length === 0 || saving" @click="batchSetTokensEnabled(false)">批量停用</button>
-        <span class="muted">已选 {{ selectedTokenIds.length }}</span>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>
-                <input type="checkbox" :checked="allVisibleTokensSelected()" :disabled="tokens.length === 0" @change="toggleAllVisibleTokens" />
-              </th>
-              <th>名称</th>
-              <th>账号</th>
-              <th>分组</th>
-              <th>状态</th>
-              <th>默认</th>
-              <th>Token</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="token in tokens" :key="token.id">
-              <td>
-                <input type="checkbox" :checked="isTokenSelected(token.id)" @change="toggleTokenSelection(token.id)" />
-              </td>
-              <td>{{ token.name }}</td>
-              <td>{{ token.siteName || '-' }} / {{ token.accountName || token.accountId }}</td>
-              <td>{{ token.tokenGroup || '-' }}</td>
-              <td><span class="badge" :class="token.enabled ? 'active' : 'disabled'">{{ token.enabled ? '启用' : '停用' }}</span></td>
-              <td>{{ token.isDefault ? '是' : '否' }}</td>
-              <td class="mono">{{ token.tokenMasked }}</td>
-              <td class="actions">
-                <button class="text-btn" type="button" @click="editToken(token)">编辑</button>
-                <button class="text-btn" type="button" @click="toggleToken(token)">
-                  {{ token.enabled ? '停用' : '启用' }}
-                </button>
-                <button class="text-btn" type="button" :disabled="token.isDefault" @click="setDefaultToken(token)">设默认</button>
-                <button class="text-btn danger" type="button" @click="removeToken(token)">删除</button>
-              </td>
-            </tr>
-            <tr v-if="!loading && tokens.length === 0">
-              <td class="empty" colspan="8">暂无 Token</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </n-card>
   </section>
 </template>
+
+<style scoped lang="scss">
+.model-drawer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.model-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.model-chip-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-chip-item {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0 10px 0 12px;
+}
+
+.model-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #243348;
+  font-family: "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-chip-remove {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.model-chip-remove:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.model-input-row {
+  display: flex;
+  gap: 10px;
+}
+
+.preset-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-empty {
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  padding: 18px;
+  text-align: center;
+}
+
+.model-empty.compact {
+  padding: 12px;
+}
+
+.model-drawer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #e0e7ef;
+  padding-top: 14px;
+}
+
+@media (max-width: 700px) {
+  .model-chip-grid,
+  .model-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .model-input-row {
+    flex-direction: column;
+  }
+}
+</style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
+import { useDialog } from 'naive-ui';
 import { api, type EventItem } from '@web/api';
 
 const PAGE_SIZE = 50;
@@ -12,12 +13,34 @@ const loading = ref(false);
 const loadingMore = ref(false);
 const error = ref('');
 const message = ref('');
+const dialog = useDialog();
 const rowLoading = reactive<Record<number, boolean>>({});
 const filters = reactive({
   type: '',
   level: '',
   read: ''
 });
+const logTypeOptions = [
+  { label: '全部类型', value: '' },
+  { label: '代理', value: 'proxy' },
+  { label: '余额', value: 'balance' },
+  { label: '凭据', value: 'token' },
+  { label: '账号', value: 'account' },
+  { label: '系统', value: 'system' },
+  { label: '状态', value: 'status' },
+  { label: '上游公告', value: 'site_notice' }
+];
+const logLevelOptions = [
+  { label: '全部级别', value: '' },
+  { label: '信息', value: 'info' },
+  { label: '警告', value: 'warning' },
+  { label: '错误', value: 'error' }
+];
+const readOptions = [
+  { label: '全部状态', value: '' },
+  { label: '未读', value: 'false' },
+  { label: '已读', value: 'true' }
+];
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -39,6 +62,13 @@ function levelClass(level: string) {
   if (level === 'error') return 'failed';
   if (level === 'warning') return 'retried';
   return 'active';
+}
+
+function tagTypeByClass(className: string) {
+  if (className === 'failed') return 'error';
+  if (className === 'retried') return 'warning';
+  if (className === 'success' || className === 'active') return 'success';
+  return 'default';
 }
 
 function eventStatus(item: EventItem) {
@@ -123,16 +153,23 @@ async function markAllRead() {
 }
 
 async function clearAll() {
-  if (!window.confirm('清空全部程序日志？')) return;
-  error.value = '';
-  message.value = '';
-  try {
-    const result = await api.clearEvents();
-    message.value = `已清空 ${result.deleted} 条日志`;
-    await reloadLogs();
-  } catch (err) {
-    setError(err, '清空日志失败');
-  }
+  dialog.warning({
+    title: '确认操作',
+    content: '清空全部程序日志？',
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      error.value = '';
+      message.value = '';
+      try {
+        const result = await api.clearEvents();
+        message.value = `已清空 ${result.deleted} 条日志`;
+        await reloadLogs();
+      } catch (err) {
+        setError(err, '清空日志失败');
+      }
+    }
+  });
 }
 
 onMounted(reloadLogs);
@@ -140,48 +177,30 @@ onMounted(reloadLogs);
 
 <template>
   <section class="page-stack">
-    <div class="panel">
+    <n-card class="admin-card" :bordered="false">
       <div class="panel-header">
         <div>
           <h2>程序日志</h2>
           <p class="muted">共 {{ total }} 条；未读 {{ unreadCount }} 条。</p>
         </div>
         <div class="actions">
-          <button class="btn btn-secondary" type="button" :disabled="loading" @click="reloadLogs">刷新</button>
-          <button class="btn btn-secondary" type="button" @click="markAllRead">全部已读</button>
-          <button class="btn btn-secondary" type="button" @click="clearAll">清空</button>
+          <n-button secondary attr-type="button" :disabled="loading" @click="reloadLogs">刷新</n-button>
+          <n-button secondary attr-type="button" @click="markAllRead">全部已读</n-button>
+          <n-button secondary attr-type="button" @click="clearAll">清空</n-button>
         </div>
       </div>
 
       <div class="toolbar">
-        <select v-model="filters.type" class="select" @change="reloadLogs">
-          <option value="">全部类型</option>
-          <option value="proxy">代理</option>
-          <option value="balance">余额</option>
-          <option value="token">Token</option>
-          <option value="account">账号</option>
-          <option value="system">系统</option>
-          <option value="status">状态</option>
-          <option value="site_notice">站点公告</option>
-        </select>
-        <select v-model="filters.level" class="select" @change="reloadLogs">
-          <option value="">全部级别</option>
-          <option value="info">信息</option>
-          <option value="warning">警告</option>
-          <option value="error">错误</option>
-        </select>
-        <select v-model="filters.read" class="select" @change="reloadLogs">
-          <option value="">全部状态</option>
-          <option value="false">未读</option>
-          <option value="true">已读</option>
-        </select>
+        <n-select v-model:value="filters.type" :options="logTypeOptions" class="toolbar-select" @update:value="reloadLogs" />
+        <n-select v-model:value="filters.level" :options="logLevelOptions" class="toolbar-select" @update:value="reloadLogs" />
+        <n-select v-model:value="filters.read" :options="readOptions" class="toolbar-select" @update:value="reloadLogs" />
       </div>
 
-      <p v-if="message" class="notice">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <n-alert v-if="message" type="success" :bordered="false">{{ message }}</n-alert>
+      <n-alert v-if="error" type="error" :bordered="false">{{ error }}</n-alert>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <n-table size="small" :bordered="false" single-line class="admin-table">
           <thead>
             <tr>
               <th>时间</th>
@@ -199,32 +218,36 @@ onMounted(reloadLogs);
             <tr v-for="item in events" :key="item.id">
               <td class="mono">{{ item.createdAt }}</td>
               <td>{{ item.type }}</td>
-              <td><span class="badge" :class="levelClass(item.level)">{{ levelLabel(item.level) }}</span></td>
+              <td>
+                <n-tag size="small" :type="tagTypeByClass(levelClass(item.level))">{{ levelLabel(item.level) }}</n-tag>
+              </td>
               <td>{{ item.title }}</td>
               <td class="error-cell">{{ item.message || '-' }}</td>
               <td>
-                <span class="badge" :class="eventStatus(item).className">{{ eventStatus(item).label }}</span>
+                <n-tag size="small" :type="tagTypeByClass(eventStatus(item).className)">
+                  {{ eventStatus(item).label }}
+                </n-tag>
               </td>
               <td>{{ item.relatedType || '-' }} {{ item.relatedId || '' }}</td>
               <td>{{ item.read ? '已读' : '未读' }}</td>
               <td class="actions">
-                <button class="text-btn" type="button" :disabled="item.read || rowLoading[item.id]" @click="markRead(item)">
+                <n-button text attr-type="button" :disabled="item.read || rowLoading[item.id]" @click="markRead(item)">
                   {{ rowLoading[item.id] ? '标记中' : '标已读' }}
-                </button>
+                </n-button>
               </td>
             </tr>
             <tr v-if="!loading && events.length === 0">
               <td class="empty" colspan="9">暂无程序日志</td>
             </tr>
           </tbody>
-        </table>
+        </n-table>
       </div>
 
       <div v-if="events.length < total" class="form-actions">
-        <button class="btn btn-secondary" type="button" :disabled="loadingMore" @click="loadMore">
+        <n-button secondary attr-type="button" :disabled="loadingMore" @click="loadMore">
           {{ loadingMore ? '加载中' : '加载更多' }}
-        </button>
+        </n-button>
       </div>
-    </div>
+    </n-card>
   </section>
 </template>
