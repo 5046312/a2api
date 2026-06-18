@@ -27,6 +27,7 @@ const form = reactive({
   adminIpAllowlistText: '',
   proxyFirstByteTimeoutSec: 0,
   proxyMaxChannelAttempts: 3,
+  proxyChannelRetryAttempts: 1,
   defaultRoutingStrategy: 'weighted',
   tokenRouterCacheTtlMs: 1500,
   balanceRefreshCron: '0 * * * *',
@@ -76,9 +77,14 @@ const rows = computed(() => {
       note: '由 PROXY_FIRST_BYTE_TIMEOUT_SEC 控制。'
     },
     {
-      label: '最大通道尝试',
+      label: '最多尝试通道数',
       value: `${settings.value.proxyMaxChannelAttempts} 次`,
-      note: '单个请求最多尝试的不同通道数；流式请求仅在首字节前允许切换。'
+      note: '单个请求最多尝试的不同通道数。'
+    },
+    {
+      label: '通道重试次数',
+      value: `${settings.value.proxyChannelRetryAttempts} 次`,
+      note: '单个命中通道连续失败达到该次数后，再切换下一通道。'
     },
     {
       label: '默认调用策略',
@@ -142,6 +148,7 @@ function syncForm(snapshot: SettingsSnapshot) {
   form.adminIpAllowlistText = snapshot.adminIpAllowlist.join('\n');
   form.proxyFirstByteTimeoutSec = snapshot.proxyFirstByteTimeoutSec;
   form.proxyMaxChannelAttempts = snapshot.proxyMaxChannelAttempts;
+  form.proxyChannelRetryAttempts = snapshot.proxyChannelRetryAttempts;
   form.defaultRoutingStrategy = snapshot.defaultRoutingStrategy;
   form.tokenRouterCacheTtlMs = snapshot.tokenRouterCacheTtlMs;
   form.balanceRefreshCron = snapshot.balanceRefreshCron;
@@ -186,6 +193,7 @@ function buildPayload() {
       .filter(Boolean),
     proxyFirstByteTimeoutSec: Number(form.proxyFirstByteTimeoutSec) || 0,
     proxyMaxChannelAttempts: Math.max(1, Math.trunc(Number(form.proxyMaxChannelAttempts) || 1)),
+    proxyChannelRetryAttempts: Math.max(1, Math.trunc(Number(form.proxyChannelRetryAttempts) || 1)),
     defaultRoutingStrategy: form.defaultRoutingStrategy,
     tokenRouterCacheTtlMs: Math.max(100, Math.trunc(Number(form.tokenRouterCacheTtlMs) || 100)),
     balanceRefreshCron: form.balanceRefreshCron.trim(),
@@ -336,8 +344,12 @@ onMounted(loadSettings);
                 <n-input-number v-model:value="form.proxyFirstByteTimeoutSec" :min="0" />
               </label>
               <label class="field">
-                <span>最大通道尝试</span>
+                <span>最多尝试通道数</span>
                 <n-input-number v-model:value="form.proxyMaxChannelAttempts" :min="1" :max="20" />
+              </label>
+              <label class="field">
+                <span>通道重试次数</span>
+                <n-input-number v-model:value="form.proxyChannelRetryAttempts" :min="1" :max="20" />
               </label>
               <label class="field">
                 <span>默认调用策略</span>
@@ -507,8 +519,13 @@ onMounted(loadSettings);
                     </tr>
                     <tr>
                       <td class="mono">PROXY_MAX_CHANNEL_ATTEMPTS</td>
-                      <td>单个请求最多尝试的不同通道数；流式请求仅在首字节前允许切换。</td>
+                      <td>单个请求最多尝试的不同通道数。</td>
                       <td>{{ settings?.proxyMaxChannelAttempts || '-' }}</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">PROXY_CHANNEL_RETRY_ATTEMPTS</td>
+                      <td>单个命中通道连续失败达到该次数后，再切换下一通道。</td>
+                      <td>{{ settings?.proxyChannelRetryAttempts || '-' }}</td>
                     </tr>
                     <tr>
                       <td class="mono">DEFAULT_ROUTING_STRATEGY</td>

@@ -29,7 +29,8 @@ P0 implemented:
 - Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables and range-based reset.
 - Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
 - Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
-- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, and channel attempt fields.
+- Failure logs show failed channel attempts from debug trace attempts, including requests that later succeeded after failover.
+- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, selected-channel score percentage, hoverable channel probability snapshot, and channel attempt fields.
 - Proxy debug trace writes an attempt row before each real upstream fetch starts, then updates that same row with the response or failure result, including repeated retries against the same upstream account.
 - Runtime settings snapshot and tabbed editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, temporary channel-disable rules, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
@@ -43,10 +44,10 @@ P0 implemented:
 - OAuth upstream account list, enable/disable, refresh/quota, import, and delete APIs, surfaced in the admin UI.
 - Stats overview API and dashboard cards for today's requests, success rate, tokens, cost, active upstreams, and abnormal upstream accounts.
 - Upstream usage, model usage, and model marketplace stats APIs, surfaced in dashboard and model marketplace pages.
-- Model decision explanation for channel candidates, scores, probabilities, and filter reasons.
+- Model decision explanation for channel candidates, consecutive failures, scores, probabilities, and availability status.
 - Model lite and summary APIs for selector and first-screen model data.
 - Decision snapshot and group-source APIs remain available for backend compatibility, but are not surfaced in the model admin page.
-- Model strategy editing, channel priority / weight / enabled-state auto-save, and cooldown clearing from the admin UI.
+- Model strategy editing, channel priority / weight / enabled-state auto-save, score penalty reset, and cooldown clearing from the admin UI.
 - Admin model tester page backed by `POST /api/test/chat` for non-stream Chat testing through the same proxy routing core, with optional downstream key policy, forced channel selection, model explanation, and debug trace detail.
 - JSON backup export/import for upstream accounts, preferences, or all data.
 - OpenAI-compatible `/v1/models`.
@@ -122,6 +123,7 @@ REQUEST_BODY_LIMIT=20971520
 SYSTEM_PROXY_URL=
 ADMIN_IP_ALLOWLIST=
 PROXY_MAX_CHANNEL_ATTEMPTS=3
+PROXY_CHANNEL_RETRY_ATTEMPTS=1
 DEFAULT_ROUTING_STRATEGY=weighted
 PROXY_FIRST_BYTE_TIMEOUT_SEC=0
 TOKEN_ROUTER_CACHE_TTL_MS=1500

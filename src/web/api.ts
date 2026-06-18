@@ -195,10 +195,11 @@ export type RouteDecisionCandidate = {
   platform: string;
   priority: number;
   weight: number;
+  consecutiveFailCount: number;
+  failurePenalty: number;
   score: number;
   probability: number;
   available: boolean;
-  reasons: string[];
   cooldownUntil: string | null;
 };
 
@@ -215,7 +216,6 @@ export type RouteDecision = {
   priority: number | null;
   summary: string[];
   candidates: RouteDecisionCandidate[];
-  filtered: Array<{ channelId: number; reason: string }>;
 };
 
 export type RouteDecisionSnapshot = {
@@ -310,6 +310,32 @@ export type ProxyLog = {
   retryCount: number;
 };
 
+export type ProxyFailureLog = {
+  id: number;
+  requestId: number;
+  traceId: number;
+  attemptIndex: number;
+  createdAt: string;
+  downstreamPath: string;
+  requestedModel: string | null;
+  modelActual: string | null;
+  routeId: number | null;
+  channelId: number | null;
+  accountId: number | null;
+  accountName: string | null;
+  upstreamUrl: string | null;
+  platform: string | null;
+  downstreamApiKeyId: number | null;
+  downstreamKeyName: string | null;
+  endpoint: string;
+  targetUrl: string;
+  responseStatus: number | null;
+  rawErrorText: string | null;
+  requestStatus: string | null;
+  requestHttpStatus: number | null;
+  isStream: boolean | null;
+};
+
 export type ClearProxyLogsResult = {
   ok: boolean;
   from: string;
@@ -335,6 +361,9 @@ export type ProxyDebugAttempt = {
   routeId: number | null;
   accountId: number | null;
   modelActual: string | null;
+  selectionRandom: number | null;
+  selectionProbability: number | null;
+  selectionCandidates: ProxyDebugAttemptSelectionCandidate[];
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -344,6 +373,16 @@ export type ProxyDebugAttempt = {
   requestHeaders: Record<string, unknown> | null;
   responseHeaders: Record<string, unknown> | null;
   createdAt: string;
+};
+
+export type ProxyDebugAttemptSelectionCandidate = {
+  channelId: number;
+  accountId: number;
+  accountName: string | null;
+  priority: number;
+  score: number;
+  probability: number;
+  selected: boolean;
 };
 
 export type ProxyDebugTrace = {
@@ -377,6 +416,7 @@ export type SettingsSnapshot = {
   systemProxyUrl: string;
   proxyFirstByteTimeoutSec: number;
   proxyMaxChannelAttempts: number;
+  proxyChannelRetryAttempts: number;
   defaultRoutingStrategy: RoutingStrategy;
   tokenRouterCacheTtlMs: number;
   balanceRefreshCron: string;
@@ -840,6 +880,7 @@ export const api = {
   getRouteSnapshot: (id: number) => apiRequest<RouteDecisionSnapshot>(`/api/routes/${id}/snapshot`),
   refreshRouteSnapshot: (id: number, model?: string) =>
     apiRequest<RouteDecisionSnapshot>(`/api/routes/${id}/snapshot/refresh`, { method: 'POST', body: { model } }),
+  resetRouteScores: (id: number) => apiRequest<{ ok: boolean; reset: number }>(`/api/routes/${id}/scores/reset`, { method: 'POST' }),
   listRouteGroupSources: (id: number) =>
     apiRequest<{ items: RouteGroupSource[]; total: number }>(`/api/routes/${id}/group-sources`),
   updateRouteGroupSources: (id: number, sourceRouteIds: number[]) =>
@@ -861,6 +902,8 @@ export const api = {
   deleteDownstreamKey: (id: number) => apiRequest<{ ok: boolean }>(`/api/downstream-keys/${id}`, { method: 'DELETE' }),
   listProxyLogs: (query: Record<string, QueryValue> = {}) =>
     apiRequest<ListResponse<ProxyLog>>(buildQuery('/api/proxy-logs', query)),
+  listProxyFailureLogs: (query: Record<string, QueryValue> = {}) =>
+    apiRequest<ListResponse<ProxyFailureLog>>(buildQuery('/api/proxy-failure-logs', query)),
   getProxyLog: (id: number) => apiRequest<ProxyLog>(`/api/proxy-logs/${id}`),
   clearProxyLogs: (body: { from: string; to: string }) =>
     apiRequest<ClearProxyLogsResult>('/api/proxy-logs', { method: 'DELETE', body }),

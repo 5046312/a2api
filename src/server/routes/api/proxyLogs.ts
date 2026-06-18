@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { clearProxyLogsByRange, getProxyLog, listProxyLogs } from '../../services/proxyLogService.js';
-import { clearProxyDebugTracesByRange, getProxyDebugTraceDetail, listProxyDebugTraces } from '../../services/proxyDebugTraceService.js';
+import { clearProxyDebugTracesByRange, getProxyDebugTraceDetail, listProxyDebugTraces, listProxyFailureLogs } from '../../services/proxyDebugTraceService.js';
 import { sendError } from '../../shared/errors.js';
 import { compactObject } from '../../shared/object.js';
 import { optionalBooleanQuery } from '../../shared/query.js';
@@ -21,6 +21,21 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
       to: z.string().optional()
     }).parse(request.query);
     return listProxyLogs(compactObject(query));
+  });
+
+  app.get('/api/proxy-failure-logs', async (request) => {
+    const query = z.object({
+      page: z.coerce.number().int().optional(),
+      pageSize: z.coerce.number().int().optional(),
+      requestId: z.coerce.number().int().positive().optional(),
+      model: z.string().optional(),
+      accountId: z.coerce.number().int().optional(),
+      downstreamApiKeyId: z.coerce.number().int().optional(),
+      isStream: optionalBooleanQuery,
+      from: z.string().optional(),
+      to: z.string().optional()
+    }).parse(request.query);
+    return listProxyFailureLogs(compactObject(query));
   });
 
   app.get('/api/proxy-logs/:id', async (request, reply) => {

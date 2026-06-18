@@ -16,10 +16,23 @@ export type SelectedChannel = {
   platform: string;
   customHeaders: Record<string, string> | null;
   proxyUrl: string | null;
+  selectionRandom: number | null;
+  selectionProbability: number | null;
+  selectionCandidates: SelectionCandidateSnapshot[];
   accountToken: string;
   accountUnitCost: number | null;
   sourceModel: string;
   requestedModel: string;
+};
+
+export type SelectionCandidateSnapshot = {
+  channelId: number;
+  accountId: number;
+  accountName: string | null;
+  priority: number;
+  score: number;
+  probability: number;
+  selected: boolean;
 };
 
 export type RouteDecisionCandidate = {
@@ -30,10 +43,11 @@ export type RouteDecisionCandidate = {
   platform: string;
   priority: number;
   weight: number;
+  consecutiveFailCount: number;
+  failurePenalty: number;
   score: number;
   probability: number;
   available: boolean;
-  reasons: string[];
   cooldownUntil: string | null;
 };
 
@@ -50,7 +64,6 @@ export type RouteDecision = {
   priority: number | null;
   summary: string[];
   candidates: RouteDecisionCandidate[];
-  filtered: Array<{ channelId: number; reason: string }>;
 };
 
 export type RouteSelectionOptions = {
@@ -90,6 +103,11 @@ type CandidateRow = {
   tokenName: string | null;
   tokenEnabled: boolean | null;
   tokenStatus: string | null;
+};
+
+type ChannelSelectionResult = {
+  row: CandidateRow;
+  selectionRandom: number | null;
 };
 
 let candidateRowsCache: { expiresAt: number; rows: CandidateRow[] } | null = null;
@@ -144,8 +162,11 @@ export async function selectChannel(
 
   const bucketPriority = candidates[0]?.priority ?? 0;
   const bucket = candidates.filter((item) => item.priority === bucketPriority);
-  const selected = selectWeighted(bucket);
-  if (!selected) return null;
+  const selection = selectWeighted(bucket);
+  if (!selection) return null;
+  const selected = selection.row;
+  const selectionCandidates = buildSelectionCandidateSnapshot(candidates, bucket, selected.channelId, selected.routingStrategy);
+  const selectedCandidate = selectionCandidates.find((candidate) => candidate.selected) ?? null;
 
   await db
     .update(schema.routeChannels)
@@ -166,6 +187,9 @@ export async function selectChannel(
     platform: selected.accountPlatform,
     customHeaders: parseJsonObject(selected.accountCustomHeaders) as Record<string, string> | null,
     proxyUrl: selected.accountProxyUrl,
+    selectionRandom: selection.selectionRandom,
+    selectionProbability: selectedCandidate?.probability ?? null,
+    selectionCandidates,
     accountToken,
     accountUnitCost: selected.accountUnitCost,
     sourceModel: selected.sourceModel || requestedModel,
@@ -194,17 +218,13 @@ export async function explainRouteDecision(
       selectedAccountId: null,
       priority: null,
       summary: ['未找到启用模型或启用通道'],
-      candidates: [],
-      filtered: []
+      candidates: []
     };
   }
 
   const route = rows[0]!;
   const candidates = rows.map((row) => buildDecisionCandidate(row, requestedModel, policy, excludedChannelIds, options));
   const availableRows = rows.filter((row) => candidates.some((candidate) => candidate.channelId === row.channelId && candidate.available));
-  const filtered = candidates
-    .filter((candidate) => !candidate.available)
-    .map((candidate) => ({ channelId: candidate.channelId, reason: candidate.reasons.join('、') }));
 
   if (availableRows.length === 0) {
     return {
@@ -221,16 +241,14 @@ export async function explainRouteDecision(
       summary: options.forcedChannelId
         ? [`命中模型，但指定通道 #${options.forcedChannelId} 不可用`]
         : ['命中模型，但没有可用通道'],
-      candidates,
-      filtered
+      candidates
     };
   }
 
   const priority = Math.min(...availableRows.map((row) => row.priority));
   const bucketRows = availableRows.filter((row) => row.priority === priority);
-  const selected = route.routingStrategy === 'stable_first'
-    ? [...bucketRows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0]!
-    : selectWeighted(bucketRows)!;
+  const selection = selectWeighted(bucketRows)!;
+  const selected = selection.row;
   applyDecisionProbability(candidates, bucketRows, route.routingStrategy);
 
   return {
@@ -251,8 +269,7 @@ export async function explainRouteDecision(
       `优先级桶：${priority}`,
       route.routingStrategy === 'weighted' ? '按权重随机选择，本接口返回一次模拟结果' : '稳定优先选择最高分通道'
     ],
-    candidates,
-    filtered
+    candidates
   };
 }
 
@@ -402,19 +419,17 @@ function buildDecisionCandidate(
   excludedChannelIds: number[],
   options: RouteSelectionOptions
 ): RouteDecisionCandidate {
-  const reasons: string[] = [];
-  if (excludedChannelIds.includes(row.channelId)) reasons.push('excluded_channel');
-  if (options.forcedChannelId && row.channelId !== options.forcedChannelId) reasons.push('not_forced_channel');
-  if (!routeMatches(row, requestedModel)) reasons.push('model_mismatch');
-  if (row.accountStatus !== 'active') reasons.push('account_inactive');
-  if (!row.tokenValue && !row.accountApiToken) reasons.push('missing_account_api_key');
-  if (!isModelAllowedByPolicy(requestedModel, row.routeId, policy)) reasons.push('model_denied_by_downstream_key');
-  if (!isCredentialAllowed(policy, { accountId: row.accountId, tokenId: row.tokenId })) {
-    reasons.push('account_denied_by_downstream_key');
-  }
-  if (row.cooldownUntil && Date.parse(row.cooldownUntil) > Date.now()) reasons.push('cooldown');
-
-  const available = reasons.length === 0;
+  const available = !(
+    excludedChannelIds.includes(row.channelId) ||
+    (options.forcedChannelId && row.channelId !== options.forcedChannelId) ||
+    !routeMatches(row, requestedModel) ||
+    row.accountStatus !== 'active' ||
+    (!row.tokenValue && !row.accountApiToken) ||
+    !isModelAllowedByPolicy(requestedModel, row.routeId, policy) ||
+    !isCredentialAllowed(policy, { accountId: row.accountId, tokenId: row.tokenId }) ||
+    !!(row.cooldownUntil && Date.parse(row.cooldownUntil) > Date.now())
+  );
+  const failurePenalty = Math.pow(0.5, row.consecutiveFailCount);
   const score = available ? scoreCandidate(row) : 0;
   return {
     channelId: row.channelId,
@@ -424,12 +439,11 @@ function buildDecisionCandidate(
     platform: row.accountPlatform,
     priority: row.priority,
     weight: row.weight,
+    consecutiveFailCount: row.consecutiveFailCount,
+    failurePenalty,
     score,
     probability: 0,
     available,
-    reasons: available
-      ? [`weight=${row.weight}`, `failPenalty=${Math.pow(0.5, row.consecutiveFailCount)}`]
-      : reasons,
     cooldownUntil: row.cooldownUntil
   };
 }
@@ -454,22 +468,56 @@ function applyDecisionProbability(
   }
 }
 
+function buildSelectionCandidateSnapshot(
+  candidates: CandidateRow[],
+  bucketRows: CandidateRow[],
+  selectedChannelId: number,
+  routingStrategy: string
+): SelectionCandidateSnapshot[] {
+  const scores = bucketRows.map((row) => ({ channelId: row.channelId, score: Math.max(0.01, scoreCandidate(row)) }));
+  const total = scores.reduce((sum, item) => sum + item.score, 0);
+  const selectedStableFirstId = routingStrategy === 'stable_first'
+    ? [...bucketRows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0]?.channelId
+    : null;
+
+  return candidates.map((row) => {
+    const score = scores.find((candidate) => candidate.channelId === row.channelId);
+    const probability = score
+      ? routingStrategy === 'stable_first'
+        ? row.channelId === selectedStableFirstId ? 1 : 0
+        : total > 0 ? Number((score.score / total).toFixed(4)) : 0
+      : 0;
+    return {
+      channelId: row.channelId,
+      accountId: row.accountId,
+      accountName: row.accountName,
+      priority: row.priority,
+      score: Number(scoreCandidate(row).toFixed(4)),
+      probability,
+      selected: row.channelId === selectedChannelId
+    };
+  });
+}
+
 function scoreCandidate(row: CandidateRow): number {
   const failPenalty = Math.pow(0.5, row.consecutiveFailCount);
   return row.weight * failPenalty;
 }
 
-function selectWeighted(rows: CandidateRow[]): CandidateRow | null {
+function selectWeighted(rows: CandidateRow[]): ChannelSelectionResult | null {
   if (rows.length === 0) return null;
   if (rows[0]?.routingStrategy === 'stable_first') {
-    return [...rows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0] ?? null;
+    const row = [...rows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0] ?? null;
+    return row ? { row, selectionRandom: null } : null;
   }
   const scored = rows.map((row) => ({ row, score: Math.max(0.01, scoreCandidate(row)) }));
   const total = scored.reduce((sum, item) => sum + item.score, 0);
-  let cursor = Math.random() * total;
+  const selectionRandom = Math.random();
+  let cursor = selectionRandom * total;
   for (const item of scored) {
     cursor -= item.score;
-    if (cursor <= 0) return item.row;
+    if (cursor <= 0) return { row: item.row, selectionRandom };
   }
-  return scored[0]?.row ?? null;
+  const row = scored[0]?.row ?? null;
+  return row ? { row, selectionRandom } : null;
 }

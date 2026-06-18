@@ -38,6 +38,8 @@ type TemporaryDisableMatch = {
   ruleIndex: number;
   matchedKeyword: string;
 };
+type RetryableProxyFailure = { done: false; error: string; switchChannel?: boolean };
+type ProxyAttemptResult = { done: true; response: unknown } | RetryableProxyFailure;
 
 export type OpenAiProxyEndpointOptions = {
   downstreamPath: string;
@@ -106,7 +108,8 @@ export async function proxyOpenAiEndpoint(
   runtimeOptions: ProxyRuntimeOptions = {}
 ) {
   const excludedChannelIds: number[] = [];
-  const maxAttempts = Math.max(1, config.proxyMaxChannelAttempts);
+  const maxChannelAttempts = Math.max(1, config.proxyMaxChannelAttempts);
+  const channelRetryAttempts = Math.max(1, config.proxyChannelRetryAttempts);
   const startedAt = Date.now();
   let nextAttemptIndex = 1;
   const traceId = await createProxyDebugTrace({
@@ -125,7 +128,7 @@ export async function proxyOpenAiEndpoint(
   let lastError = 'No available channel';
   let attemptedAnyChannel = false;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  while (excludedChannelIds.length < maxChannelAttempts) {
     const selected = await selectChannel(body.model, policy, excludedChannelIds, {
       forcedChannelId: runtimeOptions.forcedChannelId ?? null
     });
@@ -133,33 +136,38 @@ export async function proxyOpenAiEndpoint(
       break;
     }
     attemptedAnyChannel = true;
+    let channelFailures = 0;
 
-    const result = await callUpstreamChat({
-      selected,
-      body,
-      requestHeaders,
-      downstreamApiKeyId,
-      retryCount,
-      traceId,
-      logId,
-      takeAttemptIndex: () => nextAttemptIndex++,
-      startedAt,
-      reply,
-      options,
-      runtimeOptions
-    });
+    while (channelFailures < channelRetryAttempts) {
+      const result = await callUpstreamChat({
+        selected,
+        body,
+        requestHeaders,
+        downstreamApiKeyId,
+        retryCount,
+        traceId,
+        logId,
+        takeAttemptIndex: () => nextAttemptIndex++,
+        startedAt,
+        reply,
+        options,
+        runtimeOptions
+      });
 
-    if (result.done) return result.response;
+      if (result.done) return result.response;
 
-    lastError = result.error;
+      lastError = result.error;
+      channelFailures += 1;
+      retryCount += 1;
+      if (result.switchChannel) break;
+    }
     excludedChannelIds.push(selected.channelId);
-    retryCount += 1;
   }
 
   const finalError = buildChannelExhaustedError({
     attemptedAnyChannel,
-    retryCount,
-    maxAttempts,
+    attemptedChannelCount: excludedChannelIds.length,
+    maxChannelAttempts,
     lastError
   });
   await finalizeProxyDebugTrace(traceId, {
@@ -195,7 +203,7 @@ async function callUpstreamChat(input: {
   reply: FastifyReply;
   options: OpenAiProxyEndpointOptions;
   runtimeOptions: ProxyRuntimeOptions;
-}): Promise<{ done: true; response: unknown } | { done: false; error: string }> {
+}): Promise<ProxyAttemptResult> {
   const baseUpstreamBody: Record<string, unknown> = {
     ...input.body,
     model: input.selected.sourceModel
@@ -263,7 +271,7 @@ async function callUpstreamChat(input: {
           eventTitle: '上游通道临时禁用',
           eventLevel: 'warning'
         });
-        return { done: false, error: temporaryDisableReason };
+        return { done: false, error: temporaryDisableReason, switchChannel: true };
       }
       await recordChannelFailure(input.selected.channelId, error);
       if (isRetryableUpstreamStatus(response.status)) {
@@ -510,6 +518,9 @@ function buildAttemptRecordInput(
     routeId: input.selected.routeId,
     accountId: input.selected.accountId,
     modelActual: input.selected.sourceModel,
+    selectionRandom: input.selected.selectionRandom,
+    selectionProbability: input.selected.selectionProbability,
+    selectionCandidates: input.selected.selectionCandidates,
     endpoint: formatAccountEndpointName(input.selected),
     requestPath: input.options.upstreamPath,
     targetUrl,
@@ -544,13 +555,13 @@ function buildTemporaryDisableReason(error: string, match: TemporaryDisableMatch
 
 function buildChannelExhaustedError(input: {
   attemptedAnyChannel: boolean;
-  retryCount: number;
-  maxAttempts: number;
+  attemptedChannelCount: number;
+  maxChannelAttempts: number;
   lastError: string;
 }): string {
   if (!input.attemptedAnyChannel) return 'No available channel';
-  if (input.retryCount >= input.maxAttempts) {
-    return `Reached max channel attempts (${input.maxAttempts}): ${input.lastError}`;
+  if (input.attemptedChannelCount >= input.maxChannelAttempts) {
+    return `Reached max channel attempts (${input.maxChannelAttempts}): ${input.lastError}`;
   }
   return `No available channel after retryable channel failures: ${input.lastError}`;
 }

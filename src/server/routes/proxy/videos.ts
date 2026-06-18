@@ -30,6 +30,7 @@ type VideoCreateInput = {
   formData: MultipartFormData | null;
   jsonBody: Record<string, unknown> | null;
 };
+type VideoCreateAttemptResult = { done: true; response: unknown } | { done: false; error: string };
 
 const videoCreateBodySchema = z.object({
   model: z.string().trim().min(1),
@@ -60,31 +61,36 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
     });
     let nextAttemptIndex = 1;
     const excludedChannelIds: number[] = [];
-    const maxAttempts = Math.max(1, config.proxyMaxChannelAttempts);
+    const maxChannelAttempts = Math.max(1, config.proxyMaxChannelAttempts);
+    const channelRetryAttempts = Math.max(1, config.proxyChannelRetryAttempts);
     let retryCount = 0;
     let lastError = 'No available channel';
 
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    while (excludedChannelIds.length < maxChannelAttempts) {
       const selected = await selectChannel(parsed.requestedModel, auth.policy, excludedChannelIds);
       if (!selected) break;
+      let channelFailures = 0;
 
-      const result = await createVideoTaskWithChannel({
-        selected,
-        createInput: parsed,
-        requestHeaders: request.headers,
-        downstreamApiKeyId: auth.keyId,
-        retryCount,
-        traceId,
-        logId,
-        takeAttemptIndex: () => nextAttemptIndex++,
-        startedAt,
-        reply
-      });
-      if (result.done) return result.response;
+      while (channelFailures < channelRetryAttempts) {
+        const result = await createVideoTaskWithChannel({
+          selected,
+          createInput: parsed,
+          requestHeaders: request.headers,
+          downstreamApiKeyId: auth.keyId,
+          retryCount,
+          traceId,
+          logId,
+          takeAttemptIndex: () => nextAttemptIndex++,
+          startedAt,
+          reply
+        });
+        if (result.done) return result.response;
 
-      lastError = result.error;
+        lastError = result.error;
+        channelFailures += 1;
+        retryCount += 1;
+      }
       excludedChannelIds.push(selected.channelId);
-      retryCount += 1;
     }
 
     await finalizeProxyDebugTrace(traceId, {
@@ -154,7 +160,7 @@ async function createVideoTaskWithChannel(input: {
   takeAttemptIndex: () => number;
   startedAt: number;
   reply: FastifyReply;
-}): Promise<{ done: true; response: unknown } | { done: false; error: string }> {
+}): Promise<VideoCreateAttemptResult> {
   const targetUrl = resolveOpenAiPath(input.selected.baseUrl, '/v1/videos');
   const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
   let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -186,6 +192,9 @@ async function createVideoTaskWithChannel(input: {
       routeId: input.selected.routeId,
       accountId: input.selected.accountId,
       modelActual: input.selected.sourceModel,
+      selectionRandom: input.selected.selectionRandom,
+      selectionProbability: input.selected.selectionProbability,
+      selectionCandidates: input.selected.selectionCandidates,
       endpoint: formatSelectedEndpointName(input.selected),
       requestPath: '/v1/videos',
       targetUrl,

@@ -295,6 +295,23 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
     clearTokenRouterCache();
     return { ok: true, cleared: result.changes };
   });
+
+  app.post('/api/routes/:id/scores/reset', async (request, reply) => {
+    const params = idParamsSchema.parse(request.params);
+    const route = await db
+      .select({ id: schema.tokenRoutes.id })
+      .from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, params.id))
+      .get();
+    if (!route) return sendError(reply, 404, 'validation_error', 'Model not found', 'route_not_found');
+    const result = await db
+      .update(schema.routeChannels)
+      .set({ consecutiveFailCount: 0 })
+      .where(eq(schema.routeChannels.routeId, params.id))
+      .run();
+    clearTokenRouterCache();
+    return { ok: true, reset: result.changes };
+  });
 }
 
 function enabledModelChannelFilter() {

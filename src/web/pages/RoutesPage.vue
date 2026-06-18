@@ -12,6 +12,7 @@ const channelDrawerVisible = ref(false);
 const loading = ref(false);
 const savingStrategy = ref(false);
 const savingChannelId = ref<number | null>(null);
+const resettingScores = ref(false);
 const error = ref('');
 const message = ref('');
 const now = ref(Date.now());
@@ -151,23 +152,10 @@ function normalizeWeightValue(value: number | null | undefined) {
   return Math.max(1, Math.trunc(Number(value) || 1));
 }
 
-function formatDecisionReason(reason: string) {
-  // 后端返回的是机器原因码，这里转成人能直接读懂的中文说明。
-  if (reason === 'excluded_channel') return '已排除该通道';
-  if (reason === 'not_forced_channel') return '不是当前指定通道';
-  if (reason === 'model_mismatch') return '模型不匹配';
-  if (reason === 'account_inactive') return '上游账号未启用';
-  if (reason === 'missing_account_api_key') return '缺少账号凭证';
-  if (reason === 'model_denied_by_downstream_key') return '被密钥模型范围限制';
-  if (reason === 'account_denied_by_downstream_key') return '被密钥授权范围限制';
-  if (reason === 'cooldown') return '通道冷却中';
-  if (reason.startsWith('weight=')) return `权重：${reason.slice('weight='.length)}`;
-  if (reason.startsWith('failPenalty=')) return `失败惩罚：${reason.slice('failPenalty='.length)}`;
-  return reason;
-}
-
-function formatDecisionReasons(reasons: string[]) {
-  return reasons.map(formatDecisionReason).join('，');
+function formatDecisionScoreFormula(candidate: RouteDecision['candidates'][number]) {
+  const score = candidate.score.toFixed(4);
+  if (!candidate.available) return `不可用通道不参与评分，分数为 ${score}`;
+  return `分数 = 权重 ${candidate.weight} × 失败惩罚 ${candidate.failurePenalty} = ${score}；失败次数 ${candidate.consecutiveFailCount}`;
 }
 
 function syncCooldownTimer() {
@@ -304,6 +292,23 @@ async function explainRoute(route = selectedRoute.value) {
     decision.value = await api.explainRouteDecision(route.id, model);
   } catch (err) {
     setError(err, '加载决策解释失败');
+  }
+}
+
+async function resetRouteScores(route = selectedRoute.value) {
+  if (!route) return;
+  resettingScores.value = true;
+  error.value = '';
+  message.value = '';
+  try {
+    await api.resetRouteScores(route.id);
+    message.value = '分数已重置';
+    await selectRoute(route);
+    await explainRoute(route);
+  } catch (err) {
+    setError(err, '重置分数失败');
+  } finally {
+    resettingScores.value = false;
   }
 }
 
@@ -512,9 +517,14 @@ onBeforeUnmount(() => {
             <div class="panel-header">
               <div>
                 <h2>决策解释</h2>
-                <p class="muted">{{ decision ? `${decision.requestedModel} -> ${decision.actualModel}` : '选择模型后查看候选、分数和过滤原因' }}</p>
+                <p class="muted">{{ decision ? `${decision.requestedModel} -> ${decision.actualModel}` : '选择模型后查看候选、失败次数、分数和概率' }}</p>
               </div>
-              <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainRoute()">刷新</n-button>
+              <div class="actions">
+                <n-button secondary attr-type="button" :disabled="!selectedRoute || resettingScores" @click="resetRouteScores()">
+                  {{ resettingScores ? '重置中' : '重置分数' }}
+                </n-button>
+                <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainRoute()">刷新</n-button>
+              </div>
             </div>
             <div v-if="decision" class="page-stack">
               <p class="muted">{{ decision.summary.join('；') }}</p>
@@ -525,10 +535,20 @@ onBeforeUnmount(() => {
                       <th>上游账号</th>
                       <th>优先级</th>
                       <th>权重</th>
-                      <th>分数</th>
+                      <th>失败次数</th>
+                      <th>
+                        <span class="label-with-help">
+                          <span>分数</span>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <span class="help-mark">？</span>
+                            </template>
+                            <span class="tooltip-text">分数 = 权重 × 失败惩罚；失败惩罚 = pow(0.5, 失败次数)。不可用通道分数为 0。</span>
+                          </n-tooltip>
+                        </span>
+                      </th>
                       <th>概率</th>
                       <th>状态</th>
-                      <th>原因</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -536,14 +556,21 @@ onBeforeUnmount(() => {
                       <td>{{ candidate.accountName || candidate.accountId }}</td>
                       <td>{{ candidate.priority }}</td>
                       <td>{{ candidate.weight }}</td>
-                      <td>{{ candidate.score.toFixed(4) }}</td>
+                      <td>{{ candidate.consecutiveFailCount }}</td>
+                      <td>
+                        <n-tooltip trigger="hover">
+                          <template #trigger>
+                            <span>{{ candidate.score.toFixed(4) }}</span>
+                          </template>
+                          <span class="tooltip-text">{{ formatDecisionScoreFormula(candidate) }}</span>
+                        </n-tooltip>
+                      </td>
                       <td>{{ (candidate.probability * 100).toFixed(1) }}%</td>
                       <td>
                         <n-tag size="small" :type="candidate.available ? 'success' : 'error'">
                           {{ candidate.available ? '可用' : '过滤' }}
                         </n-tag>
                       </td>
-                      <td>{{ formatDecisionReasons(candidate.reasons) }}</td>
                     </tr>
                     <tr v-if="decision.candidates.length === 0">
                       <td class="empty" colspan="7">暂无候选</td>

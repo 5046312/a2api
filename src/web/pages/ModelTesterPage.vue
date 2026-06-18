@@ -95,6 +95,10 @@ function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function formatSelectionRandom(value: number | null | undefined) {
+  return typeof value === 'number' ? value.toFixed(4) : '-';
+}
+
 function buildMessages() {
   const messages: Array<{ role: string; content: string }> = [];
   const system = form.system.trim();
@@ -339,6 +343,7 @@ onMounted(loadData);
           <thead>
             <tr>
               <th>尝试</th>
+              <th>随机数</th>
               <th>Endpoint</th>
               <th>目标</th>
               <th>状态</th>
@@ -348,13 +353,14 @@ onMounted(loadData);
           <tbody>
             <tr v-for="attempt in selectedTrace.attempts" :key="attempt.id">
               <td>{{ attempt.attemptIndex }}</td>
+              <td>{{ formatSelectionRandom(attempt.selectionRandom) }}</td>
               <td>{{ attempt.endpoint }}</td>
               <td class="mono">{{ attempt.targetUrl }}</td>
               <td>{{ attempt.responseStatus || '-' }}</td>
               <td class="error-cell">{{ attempt.rawErrorText || '-' }}</td>
             </tr>
             <tr v-if="selectedTrace.attempts.length === 0">
-              <td class="empty" colspan="5">暂无尝试记录</td>
+              <td class="empty" colspan="6">暂无尝试记录</td>
             </tr>
           </tbody>
         </n-table>

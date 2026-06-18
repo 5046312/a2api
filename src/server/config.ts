@@ -21,6 +21,7 @@ export type AppConfig = {
   adminIpAllowlist: string[];
   requestBodyLimit: number;
   proxyMaxChannelAttempts: number;
+  proxyChannelRetryAttempts: number;
   defaultRoutingStrategy: 'weighted' | 'stable_first';
   proxyFirstByteTimeoutSec: number;
   tokenRouterCacheTtlMs: number;
@@ -94,6 +95,7 @@ export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
     adminIpAllowlist: parseCsv(env.ADMIN_IP_ALLOWLIST),
     requestBodyLimit: Math.max(1024, Math.trunc(parseNumber(env.REQUEST_BODY_LIMIT, 20 * 1024 * 1024))),
     proxyMaxChannelAttempts: Math.max(1, Math.trunc(parseNumber(env.PROXY_MAX_CHANNEL_ATTEMPTS, 3))),
+    proxyChannelRetryAttempts: Math.max(1, Math.trunc(parseNumber(env.PROXY_CHANNEL_RETRY_ATTEMPTS, 1))),
     defaultRoutingStrategy: parseRoutingStrategy(env.DEFAULT_ROUTING_STRATEGY),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
     tokenRouterCacheTtlMs: Math.max(100, Math.trunc(parseNumber(env.TOKEN_ROUTER_CACHE_TTL_MS, 1500))),

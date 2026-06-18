@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyDebugTraceListItem, type ProxyLog } from '@web/api';
+import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyDebugTraceListItem, type ProxyFailureLog, type ProxyLog } from '@web/api';
 
 type CleanupTarget = 'proxyLogs' | 'debugTraces';
+type LogTab = CleanupTarget | 'failedLogs';
 
 const PAGE_SIZE = 20;
 const accounts = ref<Account[]>([]);
 const downstreamKeys = ref<DownstreamKey[]>([]);
 const logs = ref<ProxyLog[]>([]);
+const failureLogs = ref<ProxyFailureLog[]>([]);
 const traces = ref<ProxyDebugTraceListItem[]>([]);
 const selectedLog = ref<ProxyLog | null>(null);
 const selectedTrace = ref<ProxyDebugTrace | null>(null);
 const detailDrawerVisible = ref(false);
-const activeTab = ref<CleanupTarget>('proxyLogs');
+const activeTab = ref<LogTab>('proxyLogs');
 const loading = ref(false);
 const loadingDetailId = ref<number | null>(null);
 const loadingTrace = ref(false);
@@ -21,6 +23,8 @@ const error = ref('');
 const notice = useMessage();
 const logsPage = ref(1);
 const logsTotal = ref(0);
+const failureLogsPage = ref(1);
+const failureLogsTotal = ref(0);
 const tracesPage = ref(1);
 const tracesTotal = ref(0);
 const cleanupModalVisible = ref(false);
@@ -49,6 +53,7 @@ const streamOptions = [
   { label: '流式请求', value: 'true' },
   { label: '非流式请求', value: 'false' }
 ];
+const statusFilterValue = computed(() => activeTab.value === 'failedLogs' ? 'failed' : filters.status);
 const logTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit',
   day: '2-digit',
@@ -122,6 +127,23 @@ function formatAttemptRoute(attempt: ProxyDebugTrace['attempts'][number]) {
 
 function formatAttemptAccount(attempt: ProxyDebugTrace['attempts'][number]) {
   return formatId(attempt.accountId);
+}
+
+function formatPercent(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-';
+}
+
+function formatSelectionScore(attempt: ProxyDebugTrace['attempts'][number]) {
+  return formatPercent(attempt.selectionProbability);
+}
+
+function getSelectionCandidates(attempt: ProxyDebugTrace['attempts'][number]) {
+  return Array.isArray(attempt.selectionCandidates) ? attempt.selectionCandidates : [];
+}
+
+function formatSelectionCandidate(candidate: ProxyDebugTrace['attempts'][number]['selectionCandidates'][number]) {
+  const account = candidate.accountName || formatId(candidate.accountId);
+  return `${formatId(candidate.channelId)} / ${account}`;
 }
 
 // 日志时间只展示月日和时分秒，列表里不重复显示年份。
@@ -657,6 +679,7 @@ onMounted(loadPage);
                     <th>路由 / 通道</th>
                     <th>账号</th>
                     <th>实际模型</th>
+                    <th>得分</th>
                     <th>Endpoint</th>
                     <th>目标</th>
                     <th>状态</th>
@@ -669,13 +692,33 @@ onMounted(loadPage);
                     <td>{{ formatAttemptRoute(attempt) }}</td>
                     <td>{{ formatAttemptAccount(attempt) }}</td>
                     <td class="mono">{{ attempt.modelActual || '-' }}</td>
+                    <td>
+                      <n-popover v-if="getSelectionCandidates(attempt).length > 0" trigger="hover" placement="bottom">
+                        <template #trigger>
+                          <span class="score-trigger">{{ formatSelectionScore(attempt) }}</span>
+                        </template>
+                        <div class="probability-popover">
+                          <div class="probability-title">通道概率</div>
+                          <div
+                            v-for="candidate in getSelectionCandidates(attempt)"
+                            :key="candidate.channelId"
+                            class="probability-row"
+                            :class="{ selected: candidate.selected }"
+                          >
+                            <span>{{ formatSelectionCandidate(candidate) }}</span>
+                            <strong>{{ formatPercent(candidate.probability) }}</strong>
+                          </div>
+                        </div>
+                      </n-popover>
+                      <span v-else>{{ formatSelectionScore(attempt) }}</span>
+                    </td>
                     <td>{{ attempt.endpoint }}</td>
                     <td class="mono">{{ attempt.targetUrl }}</td>
                     <td>{{ attempt.responseStatus || '-' }}</td>
                     <td class="error-cell">{{ attempt.rawErrorText || '-' }}</td>
                   </tr>
                   <tr v-if="selectedTrace.attempts.length === 0">
-                    <td class="empty" colspan="8">暂无尝试记录</td>
+                    <td class="empty" colspan="9">暂无尝试记录</td>
                   </tr>
                 </tbody>
               </n-table>
@@ -720,5 +763,36 @@ onMounted(loadPage);
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.score-trigger {
+  cursor: help;
+  border-bottom: 1px dotted #9aa7bc;
+}
+
+.probability-popover {
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.probability-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #172033;
+}
+
+.probability-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  color: #65748b;
+}
+
+.probability-row.selected {
+  color: #172033;
+  font-weight: 700;
 }
 </style>

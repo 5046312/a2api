@@ -224,6 +224,9 @@ CREATE TABLE IF NOT EXISTS proxy_debug_attempts (
   route_id INTEGER,
   account_id INTEGER,
   model_actual TEXT,
+  selection_random REAL,
+  selection_probability REAL,
+  selection_candidates_json TEXT,
   endpoint TEXT NOT NULL,
   request_path TEXT NOT NULL,
   target_url TEXT NOT NULL,
@@ -352,6 +355,9 @@ CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, st
   ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'account_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN account_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'model_actual', 'ALTER TABLE proxy_debug_attempts ADD COLUMN model_actual TEXT');
+  ensureColumn('proxy_debug_attempts', 'selection_random', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_random REAL');
+  ensureColumn('proxy_debug_attempts', 'selection_probability', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_probability REAL');
+  ensureColumn('proxy_debug_attempts', 'selection_candidates_json', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_candidates_json TEXT');
   ensureColumn('proxy_video_tasks', 'upstream_url', "ALTER TABLE proxy_video_tasks ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''");
   migrateLegacySiteFieldsToAccounts();
   migrateLegacyVideoTaskUpstreamUrl();

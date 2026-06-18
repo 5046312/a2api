@@ -83,6 +83,7 @@ type ImportSummary = BackupImportResult['summary'];
 const importablePreferenceKeys = [
   'proxyFirstByteTimeoutSec',
   'proxyMaxChannelAttempts',
+  'proxyChannelRetryAttempts',
   'tokenRouterCacheTtlMs',
   'balanceRefreshCron',
   'logCleanupCron',

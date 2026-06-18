@@ -15,6 +15,7 @@ const settingKeys = [
   'adminIpAllowlist',
   'proxyFirstByteTimeoutSec',
   'proxyMaxChannelAttempts',
+  'proxyChannelRetryAttempts',
   'defaultRoutingStrategy',
   'tokenRouterCacheTtlMs',
   'balanceRefreshCron',
@@ -42,6 +43,7 @@ export const settingsPayloadSchema = z.object({
   adminIpAllowlist: z.array(z.string().trim()).optional(),
   proxyFirstByteTimeoutSec: z.number().int().min(0).optional(),
   proxyMaxChannelAttempts: z.number().int().min(1).max(20).optional(),
+  proxyChannelRetryAttempts: z.number().int().min(1).max(20).optional(),
   defaultRoutingStrategy: z.enum(['weighted', 'stable_first']).optional(),
   tokenRouterCacheTtlMs: z.number().int().min(100).optional(),
   balanceRefreshCron: z.string().trim().optional(),
@@ -121,6 +123,7 @@ function snapshotFromConfig(): SettingsSnapshot {
     adminIpAllowlist: config.adminIpAllowlist,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     proxyMaxChannelAttempts: config.proxyMaxChannelAttempts,
+    proxyChannelRetryAttempts: config.proxyChannelRetryAttempts,
     defaultRoutingStrategy: config.defaultRoutingStrategy,
     tokenRouterCacheTtlMs: config.tokenRouterCacheTtlMs,
     balanceRefreshCron: config.balanceRefreshCron,
@@ -161,6 +164,7 @@ function applySettings(payload: SettingsPayload): void {
   if (payload.adminIpAllowlist !== undefined) config.adminIpAllowlist = normalizeAdminIpAllowlist(payload.adminIpAllowlist);
   if (payload.proxyFirstByteTimeoutSec !== undefined) config.proxyFirstByteTimeoutSec = payload.proxyFirstByteTimeoutSec;
   if (payload.proxyMaxChannelAttempts !== undefined) config.proxyMaxChannelAttempts = payload.proxyMaxChannelAttempts;
+  if (payload.proxyChannelRetryAttempts !== undefined) config.proxyChannelRetryAttempts = payload.proxyChannelRetryAttempts;
   if (payload.defaultRoutingStrategy !== undefined) {
     config.defaultRoutingStrategy = payload.defaultRoutingStrategy;
     clearTokenRouterCache();
