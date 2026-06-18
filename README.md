@@ -15,7 +15,8 @@ P0 implemented:
 - Admin auth failure rate limit with `Retry-After`.
 - Unified upstream account management for API endpoint, API Key, platform, models, downstream keys, and proxy logs.
 - Upstream account create and edit right-side drawer UI for API endpoint, API Key, platform, authentication mode, account-level proxy, unit cost, status, pinned state, and sort order.
-- Upstream account model drawer for fixed account model lists, upstream model preview selection, and automatic route rebuild after model changes.
+- Upstream account default model-cost drawer with provider groups, editable model costs, USD storage, and RMB display/input conversion.
+- Upstream account model drawer for fixed account model lists, per-model cost editing, upstream model preview selection with default cost prefill, and automatic route rebuild after model changes.
 - Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
 - Upstream account API Key is stored on the account; legacy key-list rows are only read as old-data fallback and are not used to generate model channels.
 - Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
@@ -30,7 +31,7 @@ P0 implemented:
 - Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
 - Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
 - Failure logs show failed channel attempts from debug trace attempts, including requests that later succeeded after failover.
-- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, selected-channel score percentage, hoverable channel probability snapshot, and channel attempt fields.
+- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, selected-channel score percentage, hoverable same-priority-bucket probability snapshot with a pie chart and fixed 12 o'clock hit pointer, and channel attempt fields.
 - Proxy debug trace writes an attempt row before each real upstream fetch starts, then updates that same row with the response or failure result, including repeated retries against the same upstream account.
 - Runtime settings snapshot and tabbed editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, temporary channel-disable rules, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
@@ -43,7 +44,7 @@ P0 implemented:
 - OAuth provider discovery, local session start/status/manual callback, callback entry, credential JSON import, local refresh/quota endpoints, and admin page.
 - OAuth upstream account list, enable/disable, refresh/quota, import, and delete APIs, surfaced in the admin UI.
 - Stats overview API and dashboard cards for today's requests, success rate, tokens, cost, active upstreams, and abnormal upstream accounts.
-- Upstream usage, model usage, and model marketplace stats APIs, surfaced in dashboard and model marketplace pages.
+- Upstream usage, model usage, and model marketplace stats APIs, including minimum and average model costs, surfaced in dashboard and model marketplace pages.
 - Model decision explanation for channel candidates, consecutive failures, scores, probabilities, and availability status.
 - Model lite and summary APIs for selector and first-screen model data.
 - Decision snapshot and group-source APIs remain available for backend compatibility, but are not surfaced in the model admin page.

@@ -67,6 +67,7 @@ export const modelAvailability = sqliteTable(
     modelName: text('model_name').notNull(),
     available: integer('available', { mode: 'boolean' }).notNull().default(true),
     isManual: integer('is_manual', { mode: 'boolean' }).notNull().default(false),
+    modelCost: real('model_cost'),
     latencyMs: integer('latency_ms'),
     contextLength: integer('context_length'),
     checkedAt: text('checked_at').notNull()

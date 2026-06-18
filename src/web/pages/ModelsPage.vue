@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type StatsMarketplaceItem } from '@web/api';
 
-type SortKey = 'accountCount' | 'successRate' | 'avgLatencyMs' | 'minCost';
+type SortKey = 'accountCount' | 'successRate' | 'avgLatencyMs' | 'minCost' | 'avgCost';
 
 const models = ref<StatsMarketplaceItem[]>([]);
 const loading = ref(false);
@@ -15,7 +15,8 @@ const sortOptions = [
   { label: '按上游账号数', value: 'accountCount' },
   { label: '按成功率', value: 'successRate' },
   { label: '按延迟', value: 'avgLatencyMs' },
-  { label: '按成本', value: 'minCost' }
+  { label: '按最低成本', value: 'minCost' },
+  { label: '按平均成本', value: 'avgCost' }
 ];
 
 watch(error, (value) => {
@@ -42,7 +43,7 @@ const summaryCards = computed(() => {
 });
 
 function compareModel(left: StatsMarketplaceItem, right: StatsMarketplaceItem, key: SortKey) {
-  if (key === 'avgLatencyMs' || key === 'minCost') {
+  if (key === 'avgLatencyMs' || key === 'minCost' || key === 'avgCost') {
     return left[key] - right[key] || left.model.localeCompare(right.model);
   }
   return right[key] - left[key] || left.model.localeCompare(right.model);
@@ -110,7 +111,7 @@ onMounted(loadModels);
       <div class="panel-header">
         <div>
           <h2>模型覆盖</h2>
-          <p class="muted">最低成本来自上游账号单位成本，成功率按最近 7 天代理日志计算。</p>
+          <p class="muted">成本来自当前可用通道，成功率按最近 7 天代理日志计算。</p>
         </div>
       </div>
       <div class="toolbar">
@@ -125,6 +126,7 @@ onMounted(loadModels);
               <th>模型</th>
               <th>上游账号</th>
               <th>最低成本</th>
+              <th>平均成本</th>
               <th>平均延迟</th>
               <th>成功率</th>
             </tr>
@@ -134,6 +136,7 @@ onMounted(loadModels);
               <td class="mono">{{ item.model }}</td>
               <td>{{ formatInteger(item.accountCount) }}</td>
               <td class="mono">{{ formatCost(item.minCost) }}</td>
+              <td class="mono">{{ formatCost(item.avgCost) }}</td>
               <td class="mono">{{ formatLatency(item.avgLatencyMs) }}</td>
               <td>
                 <n-tag size="small" :type="successRateTagType(item.successRate)">
@@ -142,7 +145,7 @@ onMounted(loadModels);
               </td>
             </tr>
             <tr v-if="!loading && filteredModels.length === 0">
-              <td class="empty" colspan="5">暂无模型数据</td>
+              <td class="empty" colspan="6">暂无模型数据</td>
             </tr>
           </tbody>
         </n-table>

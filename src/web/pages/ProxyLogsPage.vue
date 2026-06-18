@@ -143,7 +143,40 @@ function getSelectionCandidates(attempt: ProxyDebugTrace['attempts'][number]) {
 
 function formatSelectionCandidate(candidate: ProxyDebugTrace['attempts'][number]['selectionCandidates'][number]) {
   const account = candidate.accountName || formatId(candidate.accountId);
-  return `${formatId(candidate.channelId)} / ${account}`;
+  const model = candidate.sourceModel ? ` / ${candidate.sourceModel}` : '';
+  return `${formatId(candidate.channelId)} / ${account}${model}`;
+}
+
+function candidateColor(index: number) {
+  const colors = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#4b5563'];
+  return colors[index % colors.length];
+}
+
+function buildProbabilityPie(attempt: ProxyDebugTrace['attempts'][number]) {
+  const candidates = getSelectionCandidates(attempt);
+  let cursor = 0;
+  const positiveCandidates = candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => candidate.probability > 0);
+  const hitOffset = typeof attempt.selectionRandom === 'number' && Number.isFinite(attempt.selectionRandom)
+    ? -attempt.selectionRandom * 360
+    : 0;
+  const segments = positiveCandidates
+    .map(({ candidate, index }) => {
+      const start = cursor;
+      cursor += candidate.probability * 100;
+      return `${candidateColor(index)} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+    });
+  return segments.length > 0 ? `conic-gradient(from ${hitOffset.toFixed(2)}deg, ${segments.join(', ')})` : '#e5e7eb';
+}
+
+function selectedSelectionCandidate(candidates: ProxyDebugTrace['attempts'][number]['selectionCandidates']) {
+  return candidates.find((candidate) => candidate.selected) ?? null;
+}
+
+function selectedSelectionLabel(attempt: ProxyDebugTrace['attempts'][number]) {
+  const candidate = selectedSelectionCandidate(getSelectionCandidates(attempt));
+  return candidate?.sourceModel || candidate?.accountName || '命中通道';
 }
 
 // 日志时间只展示月日和时分秒，列表里不重复显示年份。
@@ -162,6 +195,12 @@ function formatLogStatus(status: string | null | undefined, retryCount = 0) {
   if (status === 'failed') return '失败';
   if (status === 'retried') return '重试';
   return status;
+}
+
+function formatFailureRequestStatus(log: ProxyFailureLog) {
+  if (!log.requestStatus) return '-';
+  const text = formatLogStatus(log.requestStatus);
+  return log.requestHttpStatus ? `${text} / ${log.requestHttpStatus}` : text;
 }
 
 // Trace 结束前 finalStatus 为空，这里统一按请求中展示。
@@ -271,7 +310,7 @@ async function loadPage() {
     ]);
     accounts.value = accountData.items;
     downstreamKeys.value = keyData.items;
-    await Promise.all([loadLogs(), loadTraces()]);
+    await Promise.all([loadLogs(), loadFailureLogs(), loadTraces()]);
   } catch (err) {
     setError(err, '加载代理日志失败');
   } finally {
@@ -305,6 +344,30 @@ async function loadLogs() {
   }
 }
 
+async function loadFailureLogs() {
+  loading.value = true;
+  error.value = '';
+  try {
+    const data = await api.listProxyFailureLogs({
+      page: failureLogsPage.value,
+      pageSize: PAGE_SIZE,
+      requestId: filters.requestId,
+      model: filters.model,
+      accountId: filters.accountId,
+      downstreamApiKeyId: filters.downstreamApiKeyId,
+      isStream: filters.isStream || undefined,
+      from: filters.from,
+      to: filters.to
+    });
+    failureLogs.value = data.items;
+    failureLogsTotal.value = data.total;
+  } catch (err) {
+    setError(err, '加载失败日志失败');
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function loadTraces() {
   loading.value = true;
   error.value = '';
@@ -331,18 +394,33 @@ function reloadLogs() {
   return loadLogs();
 }
 
+function reloadFailureLogs() {
+  failureLogsPage.value = 1;
+  return loadFailureLogs();
+}
+
 function reloadTraces() {
   tracesPage.value = 1;
   return loadTraces();
 }
 
 async function reloadAll() {
-  await Promise.all([reloadLogs(), reloadTraces()]);
+  await Promise.all([reloadLogs(), reloadFailureLogs(), reloadTraces()]);
+}
+
+function handleStatusFilterChange(value: string) {
+  filters.status = value;
+  return reloadAll();
 }
 
 async function handleLogsPageChange(page: number) {
   logsPage.value = page;
   await loadLogs();
+}
+
+async function handleFailureLogsPageChange(page: number) {
+  failureLogsPage.value = page;
+  await loadFailureLogs();
 }
 
 async function handleTracesPageChange(page: number) {
@@ -387,7 +465,13 @@ onMounted(loadPage);
   <section class="page-stack">
     <n-card class="admin-card" :bordered="false">
       <div class="toolbar">
-        <n-select v-model:value="filters.status" :options="logStatusOptions" class="toolbar-select" @update:value="reloadAll" />
+        <n-select
+          :value="statusFilterValue"
+          :options="logStatusOptions"
+          :disabled="activeTab === 'failedLogs'"
+          class="toolbar-select"
+          @update:value="handleStatusFilterChange"
+        />
         <n-select v-model:value="filters.accountId" :options="accountOptions" class="toolbar-select" @update:value="reloadAll" />
         <n-select
           v-model:value="filters.downstreamApiKeyId"
@@ -468,6 +552,78 @@ onMounted(loadPage);
               :page-size="PAGE_SIZE"
               :item-count="logsTotal"
               @update:page="handleLogsPageChange"
+            />
+          </div>
+        </n-tab-pane>
+
+        <n-tab-pane name="failedLogs" tab="失败日志">
+          <div class="panel-header">
+            <div>
+              <h2>失败日志</h2>
+              <p class="muted">按失败通道尝试展示，即使请求最终切换通道成功也会保留。</p>
+            </div>
+            <div class="actions">
+              <n-button secondary attr-type="button" @click="loadFailureLogs">刷新失败日志</n-button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <n-table size="small" :bordered="false" single-line class="admin-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>请求 ID</th>
+                  <th>尝试</th>
+                  <th>路径</th>
+                  <th>请求模型</th>
+                  <th>实际模型</th>
+                  <th>上游账号</th>
+                  <th>通道</th>
+                  <th>密钥</th>
+                  <th>HTTP</th>
+                  <th>最终请求</th>
+                  <th>流式</th>
+                  <th>目标</th>
+                  <th>失败原因</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="failure in failureLogs" :key="failure.id">
+                  <td class="mono">{{ formatTime(failure.createdAt) }}</td>
+                  <td class="mono">{{ formatId(failure.requestId) }}</td>
+                  <td>{{ failure.attemptIndex }}</td>
+                  <td class="mono">{{ failure.downstreamPath }}</td>
+                  <td class="mono">{{ failure.requestedModel || '-' }}</td>
+                  <td class="mono">{{ failure.modelActual || '-' }}</td>
+                  <td>{{ failure.accountName || (failure.accountId ? `#${failure.accountId}` : '-') }}</td>
+                  <td>{{ formatId(failure.channelId) }}</td>
+                  <td>{{ failure.downstreamKeyName || (failure.downstreamApiKeyId ? `#${failure.downstreamApiKeyId}` : '-') }}</td>
+                  <td>{{ failure.responseStatus || '-' }}</td>
+                  <td>
+                    <n-tag v-if="failure.requestStatus" size="small" :type="logStatusTagType(failure.requestStatus)">
+                      {{ formatFailureRequestStatus(failure) }}
+                    </n-tag>
+                    <span v-else>-</span>
+                  </td>
+                  <td>{{ failure.isStream === null ? '-' : failure.isStream ? '是' : '否' }}</td>
+                  <td class="mono">{{ failure.targetUrl }}</td>
+                  <td class="error-cell">{{ failure.rawErrorText || '-' }}</td>
+                  <td>
+                    <n-button text attr-type="button" :disabled="loadingTrace" @click="loadTrace(failure.traceId)">Trace</n-button>
+                  </td>
+                </tr>
+                <tr v-if="!loading && failureLogs.length === 0">
+                  <td class="empty" colspan="15">暂无失败日志</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </div>
+          <div class="pagination-wrap">
+            <n-pagination
+              :page="failureLogsPage"
+              :page-size="PAGE_SIZE"
+              :item-count="failureLogsTotal"
+              @update:page="handleFailureLogsPageChange"
             />
           </div>
         </n-tab-pane>
@@ -698,15 +854,27 @@ onMounted(loadPage);
                           <span class="score-trigger">{{ formatSelectionScore(attempt) }}</span>
                         </template>
                         <div class="probability-popover">
-                          <div class="probability-title">通道概率</div>
-                          <div
-                            v-for="candidate in getSelectionCandidates(attempt)"
-                            :key="candidate.channelId"
-                            class="probability-row"
-                            :class="{ selected: candidate.selected }"
-                          >
-                            <span>{{ formatSelectionCandidate(candidate) }}</span>
-                            <strong>{{ formatPercent(candidate.probability) }}</strong>
+                          <div class="probability-list">
+                            <div class="probability-title">同优先级桶概率</div>
+                            <div
+                              v-for="(candidate, index) in getSelectionCandidates(attempt)"
+                              :key="candidate.channelId"
+                              class="probability-row"
+                              :class="{ selected: candidate.selected }"
+                            >
+                              <span class="probability-label">
+                                <i :style="{ backgroundColor: candidateColor(index) }"></i>
+                                <span>{{ formatSelectionCandidate(candidate) }}</span>
+                              </span>
+                              <strong>{{ formatPercent(candidate.probability) }}</strong>
+                            </div>
+                          </div>
+                          <div class="probability-chart">
+                            <div class="hit-arrow">▼</div>
+                            <div class="pie-chart" :style="{ background: buildProbabilityPie(attempt) }">
+                              <span>{{ formatPercent(attempt.selectionProbability) }}</span>
+                            </div>
+                            <p>{{ selectedSelectionLabel(attempt) }}</p>
                           </div>
                         </div>
                       </n-popover>
@@ -771,16 +939,23 @@ onMounted(loadPage);
 }
 
 .probability-popover {
-  min-width: 220px;
+  min-width: 420px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 18px;
 }
 
 .probability-title {
   font-size: 12px;
   font-weight: 700;
   color: #172033;
+}
+
+.probability-list {
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .probability-row {
@@ -791,8 +966,71 @@ onMounted(loadPage);
   color: #65748b;
 }
 
+.probability-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.probability-label i {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+}
+
+.probability-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .probability-row.selected {
   color: #172033;
   font-weight: 700;
+}
+
+.probability-chart {
+  width: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.hit-arrow {
+  height: 14px;
+  color: #111827;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pie-chart {
+  width: 108px;
+  height: 108px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d7dde8;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 18px #ffffff;
+}
+
+.pie-chart span {
+  color: #172033;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.probability-chart p {
+  max-width: 128px;
+  margin: 0;
+  overflow: hidden;
+  color: #65748b;
+  font-size: 12px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

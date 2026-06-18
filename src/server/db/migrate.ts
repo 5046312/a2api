@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS model_availability (
   model_name TEXT NOT NULL,
   available INTEGER NOT NULL DEFAULT 1,
   is_manual INTEGER NOT NULL DEFAULT 0,
+  model_cost REAL,
   latency_ms INTEGER,
   context_length INTEGER,
   checked_at TEXT NOT NULL,
@@ -346,6 +347,7 @@ CREATE INDEX IF NOT EXISTS events_type_created_idx ON events(type, created_at);
   ensureColumn('accounts', 'proxy_url', 'ALTER TABLE accounts ADD COLUMN proxy_url TEXT');
   ensureColumn('accounts', 'use_system_proxy', 'ALTER TABLE accounts ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0');
   ensureColumn('accounts', 'custom_headers', 'ALTER TABLE accounts ADD COLUMN custom_headers TEXT');
+  ensureColumn('model_availability', 'model_cost', 'ALTER TABLE model_availability ADD COLUMN model_cost REAL');
   sqlite.exec(`
 CREATE INDEX IF NOT EXISTS accounts_platform_idx ON accounts(platform);
 CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, status);

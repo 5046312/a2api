@@ -117,12 +117,17 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
         createdAt: schema.tokenRoutes.createdAt,
         updatedAt: schema.tokenRoutes.updatedAt,
         channelCount: sql<number>`count(${schema.routeChannels.id})`,
+        averageCost: sql<number>`coalesce(avg(case when ${schema.routeChannels.enabled} = 1 then coalesce(${schema.modelAvailability.modelCost}, ${schema.accounts.unitCost}) end), 0)`,
         successCount: sql<number>`coalesce(sum(${schema.routeChannels.successCount}), 0)`,
         failCount: sql<number>`coalesce(sum(${schema.routeChannels.failCount}), 0)`
       })
       .from(schema.tokenRoutes)
       .innerJoin(schema.routeChannels, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
+      .leftJoin(schema.modelAvailability, and(
+        eq(schema.modelAvailability.accountId, schema.routeChannels.accountId),
+        eq(schema.modelAvailability.modelName, schema.routeChannels.sourceModel)
+      ))
       .where(activeAccountAnyChannelFilter())
       .groupBy(schema.tokenRoutes.id)
       .orderBy(desc(schema.tokenRoutes.id))

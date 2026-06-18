@@ -105,6 +105,10 @@ function formatTime(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : '-';
 }
 
+function formatCost(value: number | null | undefined) {
+  return Number(value || 0) > 0 ? `$${Number(value).toFixed(4)}` : '-';
+}
+
 function isCooling(channel: RouteChannel) {
   if (!channel.cooldownUntil) return false;
   const cooldownAt = Date.parse(channel.cooldownUntil);
@@ -368,6 +372,7 @@ onBeforeUnmount(() => {
               <th>模式</th>
               <th>策略</th>
               <th>通道</th>
+              <th>平均成本</th>
               <th>成功/失败</th>
               <th>状态</th>
               <th>操作</th>
@@ -400,6 +405,7 @@ onBeforeUnmount(() => {
                 </span>
               </td>
               <td>{{ route.channelCount }}</td>
+              <td class="mono">{{ formatCost(route.averageCost) }}</td>
               <td>{{ route.successCount }} / {{ route.failCount }}</td>
               <td>
                 <n-tag size="small" :type="route.enabled ? 'success' : 'error'">{{ route.enabled ? '启用' : '停用' }}</n-tag>
@@ -413,7 +419,7 @@ onBeforeUnmount(() => {
               </td>
             </tr>
             <tr v-if="!loading && routes.length === 0">
-              <td class="empty" colspan="8">暂无模型</td>
+              <td class="empty" colspan="9">暂无模型</td>
             </tr>
           </tbody>
         </n-table>

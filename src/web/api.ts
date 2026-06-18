@@ -32,13 +32,29 @@ export type Account = {
 
 export type AccountModels = {
   accountId: number;
-  models: string[];
+  models: AccountModelCost[];
 };
 
 export type AccountModelsUpdateResult = AccountModels & {
   created: number;
   updated: number;
   routeRebuilt: boolean;
+};
+
+export type AccountModelCost = {
+  model: string;
+  unitCost: number | null;
+};
+
+export type ModelCostGroup = {
+  provider: string;
+  label: string;
+  models: AccountModelCost[];
+};
+
+export type ModelCostDefaults = {
+  currency: 'USD';
+  groups: ModelCostGroup[];
 };
 
 export type AccountBatchAction = 'enable' | 'disable' | 'delete' | 'refreshBalance';
@@ -146,6 +162,7 @@ export type RouteItem = {
   routingStrategy: string;
   enabled: boolean;
   channelCount: number;
+  averageCost: number;
   successCount: number;
   failCount: number;
 };
@@ -379,6 +396,7 @@ export type ProxyDebugAttemptSelectionCandidate = {
   channelId: number;
   accountId: number;
   accountName: string | null;
+  sourceModel?: string | null;
   priority: number;
   score: number;
   probability: number;
@@ -635,6 +653,7 @@ export type StatsMarketplaceItem = {
   model: string;
   accountCount: number;
   minCost: number;
+  avgCost: number;
   avgLatencyMs: number;
   successRate: number;
 };
@@ -851,11 +870,15 @@ export const api = {
     apiRequest<BalanceRefreshResult>(`/api/accounts/${id}/balance`, { method: 'POST' }),
   refreshAllBalances: () =>
     apiRequest<BalanceRefreshAllResult>('/api/accounts/balance/refresh-all', { method: 'POST' }),
+  getModelCostDefaults: () =>
+    apiRequest<ModelCostDefaults>('/api/accounts/model-cost-defaults'),
+  updateModelCostDefaults: (groups: ModelCostGroup[]) =>
+    apiRequest<ModelCostDefaults>('/api/accounts/model-cost-defaults', { method: 'PUT', body: { groups } }),
   listAccountModels: (id: number) =>
     apiRequest<AccountModels>(`/api/accounts/${id}/models`),
   previewAccountModels: (id: number) =>
     apiRequest<AccountModels>(`/api/accounts/${id}/models/preview`, { method: 'POST' }),
-  updateAccountModels: (id: number, models: string[]) =>
+  updateAccountModels: (id: number, models: AccountModelCost[]) =>
     apiRequest<AccountModelsUpdateResult>(`/api/accounts/${id}/models`, { method: 'PUT', body: { models } }),
   refreshModels: (id: number) =>
     apiRequest<{ accountId: number; created: number; updated: number; removed: number; routeRebuilt: boolean }>(`/api/accounts/${id}/models/refresh`, {

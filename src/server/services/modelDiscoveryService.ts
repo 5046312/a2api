@@ -4,6 +4,7 @@ import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import { resolveDefaultAccountCredential } from './accountTokenService.js';
+import { getDefaultModelCostMap } from './modelCostService.js';
 import { rebuildRoutes } from './routeRefreshService.js';
 
 export type ModelRefreshResult = {
@@ -16,13 +17,20 @@ export type ModelRefreshResult = {
 
 export type AccountModelsResult = {
   accountId: number;
-  models: string[];
+  models: AccountModelItem[];
 };
 
 type DiscoveredAccountModel = {
   name: string;
   contextLength: number | null;
 };
+
+export type AccountModelItem = {
+  model: string;
+  unitCost: number | null;
+};
+
+export type AccountModelInput = string | AccountModelItem;
 
 export type AccountModelsUpdateResult = AccountModelsResult & {
   created: number;
@@ -33,25 +41,32 @@ export type AccountModelsUpdateResult = AccountModelsResult & {
 export async function listAccountModels(accountId: number): Promise<AccountModelsResult> {
   await assertAccountExists(accountId);
   const rows = await db
-    .select({ modelName: schema.modelAvailability.modelName })
+    .select({ modelName: schema.modelAvailability.modelName, modelCost: schema.modelAvailability.modelCost })
     .from(schema.modelAvailability)
     .where(and(eq(schema.modelAvailability.accountId, accountId), eq(schema.modelAvailability.available, true)))
     .orderBy(asc(schema.modelAvailability.modelName))
     .all();
-  return { accountId, models: rows.map((row) => row.modelName) };
+  return { accountId, models: rows.map((row) => ({ model: row.modelName, unitCost: row.modelCost })) };
 }
 
 export async function previewAccountModels(accountId: number): Promise<AccountModelsResult> {
   // 预览只返回可选择模型，不落库，确认保存由账号模型接口完成。
-  const models = normalizeModelNames(
+  const modelNames = normalizeModelNames(
     (await discoverAccountModels(accountId)).map((model) => model.name)
   );
-  return { accountId, models };
+  const defaultCostMap = getDefaultModelCostMap();
+  return {
+    accountId,
+    models: modelNames.map((model) => ({
+      model,
+      unitCost: defaultCostMap.get(model.toLowerCase()) ?? null
+    }))
+  };
 }
 
-export async function updateAccountModels(accountId: number, models: string[]): Promise<AccountModelsUpdateResult> {
+export async function updateAccountModels(accountId: number, models: AccountModelInput[]): Promise<AccountModelsUpdateResult> {
   await assertAccountExists(accountId);
-  const normalizedModels = normalizeModelNames(models);
+  const normalizedModels = normalizeAccountModels(models);
   const now = nowIso();
   const existingRows = await db
     .select()
@@ -69,12 +84,12 @@ export async function updateAccountModels(accountId: number, models: string[]): 
 
   let created = 0;
   let updated = 0;
-  for (const modelName of normalizedModels) {
-    const existing = existingByModel.get(modelName);
+  for (const model of normalizedModels) {
+    const existing = existingByModel.get(model.model);
     if (existing) {
       await db
         .update(schema.modelAvailability)
-        .set({ available: true, isManual: true, checkedAt: now })
+        .set({ available: true, isManual: true, modelCost: model.unitCost, checkedAt: now })
         .where(eq(schema.modelAvailability.id, existing.id))
         .run();
       updated += 1;
@@ -83,9 +98,10 @@ export async function updateAccountModels(accountId: number, models: string[]): 
         .insert(schema.modelAvailability)
         .values({
           accountId,
-          modelName,
+          modelName: model.model,
           available: true,
           isManual: true,
+          modelCost: model.unitCost,
           contextLength: null,
           checkedAt: now
         })
@@ -106,6 +122,7 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
   let updated = 0;
   let removed = 0;
   const now = nowIso();
+  const defaultCostMap = getDefaultModelCostMap();
 
   for (const model of models) {
     const existing = await db
@@ -131,6 +148,7 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
           accountId,
           modelName: model.name,
           available: true,
+          modelCost: defaultCostMap.get(model.name.toLowerCase()) ?? null,
           contextLength: model.contextLength ?? null,
           checkedAt: now
         })
@@ -183,4 +201,23 @@ async function assertAccountExists(accountId: number): Promise<void> {
 
 function normalizeModelNames(models: string[]): string[] {
   return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+}
+
+function normalizeAccountModels(models: AccountModelInput[]): AccountModelItem[] {
+  const byName = new Map<string, AccountModelItem>();
+  for (const item of models) {
+    const model = typeof item === 'string' ? item.trim() : item.model.trim();
+    if (!model) continue;
+    byName.set(model.toLowerCase(), {
+      model,
+      unitCost: typeof item === 'string' ? null : normalizeUnitCost(item.unitCost)
+    });
+  }
+  return Array.from(byName.values()).sort((left, right) => left.model.localeCompare(right.model));
+}
+
+function normalizeUnitCost(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.round(value * 1_000_000) / 1_000_000;
 }

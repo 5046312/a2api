@@ -12,14 +12,22 @@ import {
   verifyAccountToken
 } from '../../services/accountService.js';
 import { refreshAccountBalance, refreshAllAccountBalances } from '../../services/balanceService.js';
+import { listModelCostDefaults, modelCostDefaultsPayloadSchema, updateModelCostDefaults } from '../../services/modelCostService.js';
 import { listAccountModels, previewAccountModels, refreshAccountModels, updateAccountModels } from '../../services/modelDiscoveryService.js';
 import { rebuildRoutes } from '../../services/routeRefreshService.js';
 import { sendError } from '../../shared/errors.js';
 import { compactObject } from '../../shared/object.js';
 
 const idParamsSchema = z.object({ id: z.coerce.number().int().positive() });
+const accountModelItemSchema = z.union([
+  z.string().trim(),
+  z.object({
+    model: z.string().trim().min(1),
+    unitCost: z.number().min(0).nullable().optional()
+  })
+]);
 const accountModelsPayloadSchema = z.object({
-  models: z.array(z.string().trim()).default([])
+  models: z.array(accountModelItemSchema).default([])
 });
 const listQuerySchema = z.object({
   status: z.string().optional(),
@@ -78,6 +86,14 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post('/api/accounts/balance/refresh-all', async () => refreshAllAccountBalances());
+
+  app.get('/api/accounts/model-cost-defaults', async () => listModelCostDefaults());
+
+  app.put('/api/accounts/model-cost-defaults', async (request, reply) => {
+    const parsed = modelCostDefaultsPayloadSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    return updateModelCostDefaults(parsed.data.groups);
+  });
 
   app.post('/api/accounts/batch', async (request, reply) => {
     const parsed = accountBatchPayloadSchema.safeParse(request.body);

@@ -40,6 +40,7 @@ export type StatsMarketplaceItem = {
   model: string;
   accountCount: number;
   minCost: number;
+  avgCost: number;
   avgLatencyMs: number;
   successRate: number;
 };
@@ -195,6 +196,7 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
     .select({
       model: schema.modelAvailability.modelName,
       accountId: schema.accounts.id,
+      modelCost: schema.modelAvailability.modelCost,
       unitCost: schema.accounts.unitCost,
       latencyMs: schema.modelAvailability.latencyMs
     })
@@ -206,7 +208,7 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
   for (const row of accountRows) {
     const aggregate = ensureMarketplaceAggregate(aggregates, row.model);
     aggregate.accountIds.add(row.accountId);
-    pushNumber(aggregate.costs, row.unitCost);
+    pushNumber(aggregate.costs, row.modelCost ?? row.unitCost);
     pushNumber(aggregate.latencies, row.latencyMs);
   }
 
@@ -240,6 +242,7 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
         model,
         accountCount: aggregate.accountIds.size,
         minCost: aggregate.costs.length > 0 ? Math.min(...aggregate.costs) : 0,
+        avgCost: aggregate.costs.length > 0 ? average(aggregate.costs) : 0,
         avgLatencyMs: Math.round(latencyAverage || logLatencyAverage || 0),
         successRate: successRate(aggregate.logSuccess, aggregate.logTotal)
       };

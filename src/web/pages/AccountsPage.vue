@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
-import { api, type Account, type AccountBatchAction } from '@web/api';
+import { api, type Account, type AccountBatchAction, type AccountModelCost, type ModelCostGroup } from '@web/api';
 
 const defaultPlatformOptions = [
   'openai',
@@ -21,18 +21,35 @@ const defaultPlatformOptions = [
 ];
 
 const openaiPresetModels = [
-  'gpt-5.2',
-  'gpt-5.4',
+  'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.2-chat-latest',
+  'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
   'gpt-5.5',
+  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-2026-03-05',
   'gpt-5.3-codex',
   'gpt-5.3-codex-spark',
+  'codex-auto-review',
   'gpt-4o',
+  'gpt-4o-audio-preview',
   'gpt-4o-mini',
+  'gpt-4o-realtime-preview',
   'gpt-4.1',
+  'gpt-image-1',
+  'gpt-image-1.5',
+  'gpt-image-2',
   'o1',
   'o3'
 ];
 const claudePresetModels = [
+  'claude-3-5-sonnet-20241022',
+  'claude-3-5-sonnet-20240620',
+  'claude-3-5-haiku-20241022',
+  'claude-3-7-sonnet-20250219',
+  'claude-sonnet-4-20250514',
+  'claude-opus-4-20250514',
+  'claude-opus-4-1-20250805',
+  'claude-sonnet-4-5-20250929',
+  'claude-haiku-4-5-20251001',
+  'claude-opus-4-5-20251101',
   'claude-fable-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
@@ -43,11 +60,13 @@ const claudePresetModels = [
 ];
 const geminiPresetModels = [
   'gemini-3.1-flash-image',
-  'gemini-3-flash-preview',
-  'gemini-3-pro-preview',
-  'gemini-2.5-pro',
+  'gemini-2.5-flash-image',
+  'gemini-2.0-flash',
   'gemini-2.5-flash',
-  'gemini-2.0-flash'
+  'gemini-2.5-pro',
+  'gemini-3.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-3-pro-preview'
 ];
 const antigravityPresetModels = [
   'claude-fable-5',
@@ -73,6 +92,7 @@ const openaiCompatiblePlatforms = new Set([
   'cliproxyapi',
   'codex'
 ]);
+const cnyRate = 7.2;
 
 const accounts = ref<Account[]>([]);
 const platformOptions = ref(defaultPlatformOptions);
@@ -80,6 +100,11 @@ const loading = ref(false);
 const saving = ref(false);
 const detecting = ref(false);
 const verifying = ref(false);
+const showCostDrawer = ref(false);
+const loadingDefaultCosts = ref(false);
+const savingDefaultCosts = ref(false);
+const costCurrency = ref<'USD' | 'CNY'>('USD');
+const defaultCostGroups = ref<ModelCostGroupDraft[]>([]);
 const refreshingBalanceId = ref<number | null>(null);
 const refreshingAllBalances = ref(false);
 const editingAccountId = ref<number | null>(null);
@@ -87,13 +112,13 @@ const showAccountDrawer = ref(false);
 const showModelDrawer = ref(false);
 const showAdvanced = ref(false);
 const modelDrawerAccount = ref<Account | null>(null);
-const accountModels = ref<string[]>([]);
+const accountModels = ref<AccountModelDraft[]>([]);
 const customModelName = ref('');
 const loadingModels = ref(false);
 const savingModels = ref(false);
 const syncingModels = ref(false);
 const syncModelModalVisible = ref(false);
-const syncModelOptions = ref<string[]>([]);
+const syncModelOptions = ref<AccountModelDraft[]>([]);
 const selectedSyncModels = ref<string[]>([]);
 const modelDrawerError = ref('');
 const modelDrawerMessage = ref('');
@@ -140,14 +165,28 @@ const expiredStatusActionOptions = [
   { label: '恢复启用', key: 'active' },
   { label: '改为停用', key: 'disabled' }
 ];
+const defaultCostMap = computed(() => {
+  const costs = new Map<string, number | null>();
+  for (const group of defaultCostGroups.value) {
+    for (const item of group.models) {
+      costs.set(item.model.toLowerCase(), item.unitCost);
+    }
+  }
+  return costs;
+});
 const modelPresetOptions = computed(() =>
-  presetModelsForPlatform(modelDrawerAccount.value?.platform).filter((model) => !accountModels.value.includes(model))
+  presetModelsForPlatform(modelDrawerAccount.value?.platform).filter((model) => !hasAccountModel(model))
 );
 const allSyncModelsSelected = computed(() =>
-  syncModelOptions.value.length > 0 && syncModelOptions.value.every((model) => selectedSyncModels.value.includes(model))
+  syncModelOptions.value.length > 0 && syncModelOptions.value.every((item) => selectedSyncModels.value.includes(item.model))
 );
 
 type AccountToggleStatus = 'active' | 'disabled';
+type AccountModelDraft = AccountModelCost;
+type ModelCostGroupDraft = ModelCostGroup & {
+  newModel: string;
+  newUnitCost: number | null;
+};
 type PendingExpiredStatusAction = {
   account: Account;
   nextStatus: AccountToggleStatus;
@@ -177,6 +216,39 @@ function setError(err: unknown, fallback: string) {
 
 function formatNumber(value: number | null | undefined) {
   return Number(value || 0).toFixed(2);
+}
+
+function roundCost(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function displayCost(value: number | null | undefined) {
+  if (value === null || value === undefined) return null;
+  return costCurrency.value === 'CNY' ? roundCost(value * cnyRate) : value;
+}
+
+function storeCost(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return costCurrency.value === 'CNY' ? roundCost(value / cnyRate) : roundCost(value);
+}
+
+function formatCost(value: number | null | undefined) {
+  const displayValue = displayCost(value);
+  if (displayValue === null) return '-';
+  const prefix = costCurrency.value === 'CNY' ? '¥' : '$';
+  return `${prefix}${displayValue.toFixed(4)}`;
+}
+
+function costPlaceholder() {
+  return costCurrency.value === 'CNY' ? '每 100 万 token，人民币' : '每 100 万 token，美元';
+}
+
+function providerMark(provider: string) {
+  const normalized = provider.toLowerCase();
+  if (normalized === 'openai') return 'AI';
+  if (normalized === 'claude') return 'C';
+  if (normalized === 'gemini') return 'G';
+  return normalized.slice(0, 2).toUpperCase();
 }
 
 function formatTime(value: string | null | undefined) {
@@ -238,8 +310,16 @@ function presetModelsForPlatform(platform: string | null | undefined) {
   return Array.from(new Set([...openaiPresetModels, ...claudePresetModels, ...geminiPresetModels]));
 }
 
-function sortModelNames(models: string[]) {
-  return models.slice().sort((left, right) => left.localeCompare(right));
+function sortAccountModels(models: AccountModelCost[]): AccountModelDraft[] {
+  return models
+    .map((item) => ({ model: item.model.trim(), unitCost: item.unitCost }))
+    .filter((item) => item.model)
+    .sort((left, right) => left.model.localeCompare(right.model));
+}
+
+function hasAccountModel(model: string) {
+  const normalized = model.trim().toLowerCase();
+  return accountModels.value.some((item) => item.model.toLowerCase() === normalized);
 }
 
 function batchAccountActionLabel(action: AccountBatchAction) {
@@ -324,6 +404,88 @@ function editAccount(account: Account) {
   showAccountDrawer.value = true;
 }
 
+function toCostGroupDraft(group: ModelCostGroup): ModelCostGroupDraft {
+  return {
+    provider: group.provider,
+    label: group.label,
+    models: sortAccountModels(group.models),
+    newModel: '',
+    newUnitCost: null
+  };
+}
+
+async function loadDefaultModelCosts(force = false) {
+  if (!force && defaultCostGroups.value.length > 0) return;
+  loadingDefaultCosts.value = true;
+  error.value = '';
+  try {
+    const result = await api.getModelCostDefaults();
+    defaultCostGroups.value = result.groups.map(toCostGroupDraft);
+  } catch (err) {
+    setError(err, '加载默认模型费用失败');
+  } finally {
+    loadingDefaultCosts.value = false;
+  }
+}
+
+function openDefaultCostDrawer() {
+  error.value = '';
+  message.value = '';
+  showCostDrawer.value = true;
+  void loadDefaultModelCosts(true);
+}
+
+function closeDefaultCostDrawer() {
+  if (savingDefaultCosts.value) return;
+  showCostDrawer.value = false;
+}
+
+function addDefaultCostModel(group: ModelCostGroupDraft) {
+  const model = group.newModel.trim();
+  if (!model) return;
+  const exists = group.models.some((item) => item.model.toLowerCase() === model.toLowerCase());
+  if (exists) {
+    message.value = '默认模型已存在';
+    return;
+  }
+  group.models = sortAccountModels([...group.models, { model, unitCost: group.newUnitCost }]);
+  group.newModel = '';
+  group.newUnitCost = null;
+}
+
+function removeDefaultCostModel(group: ModelCostGroupDraft, model: string) {
+  group.models = group.models.filter((item) => item.model !== model);
+}
+
+function updateDefaultCost(item: AccountModelCost, value: number | null) {
+  item.unitCost = storeCost(value);
+}
+
+function updateNewDefaultCost(group: ModelCostGroupDraft, value: number | null) {
+  group.newUnitCost = storeCost(value);
+}
+
+async function saveDefaultModelCosts() {
+  savingDefaultCosts.value = true;
+  error.value = '';
+  message.value = '';
+  try {
+    const payload = defaultCostGroups.value.map((group) => ({
+      provider: group.provider,
+      label: group.label,
+      models: group.models.map((model) => ({ model: model.model, unitCost: model.unitCost }))
+    }));
+    const result = await api.updateModelCostDefaults(payload);
+    defaultCostGroups.value = result.groups.map(toCostGroupDraft);
+    message.value = '默认模型费用已保存';
+    showCostDrawer.value = false;
+  } catch (err) {
+    setError(err, '保存默认模型费用失败');
+  } finally {
+    savingDefaultCosts.value = false;
+  }
+}
+
 function resetModelDrawer() {
   modelDrawerAccount.value = null;
   accountModels.value = [];
@@ -347,6 +509,7 @@ function openModelDrawer(account: Account) {
   modelDrawerError.value = '';
   modelDrawerMessage.value = '';
   showModelDrawer.value = true;
+  void loadDefaultModelCosts(false);
   void loadAccountModels(account.id);
 }
 
@@ -355,7 +518,7 @@ async function loadAccountModels(accountId: number) {
   modelDrawerError.value = '';
   try {
     const result = await api.listAccountModels(accountId);
-    accountModels.value = sortModelNames(result.models);
+    accountModels.value = sortAccountModels(result.models);
   } catch (err) {
     modelDrawerError.value = err instanceof Error ? err.message : '加载上游账号模型失败';
   } finally {
@@ -366,17 +529,24 @@ async function loadAccountModels(accountId: number) {
 function addModel(model: string) {
   const modelName = model.trim();
   if (!modelName) return;
-  if (accountModels.value.includes(modelName)) {
+  if (hasAccountModel(modelName)) {
     modelDrawerMessage.value = '模型已存在';
     return;
   }
-  accountModels.value = sortModelNames([...accountModels.value, modelName]);
+  accountModels.value = sortAccountModels([
+    ...accountModels.value,
+    { model: modelName, unitCost: defaultCostMap.value.get(modelName.toLowerCase()) ?? null }
+  ]);
   customModelName.value = '';
   modelDrawerMessage.value = '';
 }
 
 function removeModel(model: string) {
-  accountModels.value = accountModels.value.filter((item) => item !== model);
+  accountModels.value = accountModels.value.filter((item) => item.model !== model);
+}
+
+function updateAccountModelCost(item: AccountModelDraft, value: number | null) {
+  item.unitCost = storeCost(value);
 }
 
 function clearModelDraft() {
@@ -395,7 +565,7 @@ function toggleSyncModel(model: string, checked: boolean) {
 }
 
 function toggleAllSyncModels(checked: boolean) {
-  selectedSyncModels.value = checked ? syncModelOptions.value.slice() : [];
+  selectedSyncModels.value = checked ? syncModelOptions.value.map((item) => item.model) : [];
 }
 
 async function syncAccountModels() {
@@ -406,8 +576,8 @@ async function syncAccountModels() {
   modelDrawerMessage.value = '';
   try {
     const result = await api.previewAccountModels(account.id);
-    syncModelOptions.value = sortModelNames(result.models);
-    selectedSyncModels.value = syncModelOptions.value.slice();
+    syncModelOptions.value = sortAccountModels(result.models);
+    selectedSyncModels.value = syncModelOptions.value.map((item) => item.model);
     syncModelModalVisible.value = true;
   } catch (err) {
     modelDrawerError.value = err instanceof Error ? err.message : '同步上游模型失败';
@@ -417,7 +587,9 @@ async function syncAccountModels() {
 }
 
 function confirmSyncModels() {
-  accountModels.value = sortModelNames(selectedSyncModels.value);
+  accountModels.value = sortAccountModels(
+    syncModelOptions.value.filter((item) => selectedSyncModels.value.includes(item.model))
+  );
   modelDrawerMessage.value = `已选择 ${accountModels.value.length} 个上游模型，保存后生效`;
   syncModelModalVisible.value = false;
 }
@@ -430,7 +602,7 @@ async function saveAccountModels() {
   modelDrawerMessage.value = '';
   try {
     const result = await api.updateAccountModels(account.id, accountModels.value);
-    accountModels.value = sortModelNames(result.models);
+    accountModels.value = sortAccountModels(result.models);
     message.value = `上游账号模型已保存：${result.models.length} 个`;
     showModelDrawer.value = false;
     await loadAll();
@@ -781,6 +953,98 @@ onMounted(() => {
     </n-drawer>
 
     <n-drawer
+      v-model:show="showCostDrawer"
+      placement="right"
+      width="min(860px, calc(100vw - 24px))"
+      :mask-closable="!savingDefaultCosts"
+      :close-on-esc="!savingDefaultCosts"
+    >
+      <n-drawer-content title="默认模型费用" :closable="!savingDefaultCosts">
+        <div class="model-drawer-stack">
+          <div class="panel-header">
+            <div>
+              <h2>模型成本目录</h2>
+              <p class="muted">单位为每 100 万 token，保存时统一写入 USD。</p>
+            </div>
+            <n-radio-group v-model:value="costCurrency" size="small">
+              <n-radio-button value="USD">USD</n-radio-button>
+              <n-radio-button value="CNY">RMB</n-radio-button>
+            </n-radio-group>
+          </div>
+
+          <n-spin :show="loadingDefaultCosts">
+            <section v-for="group in defaultCostGroups" :key="group.provider" class="model-drawer-section">
+              <div class="panel-header">
+                <div class="provider-heading">
+                  <span class="provider-mark" :class="`provider-mark-${group.provider}`">{{ providerMark(group.provider) }}</span>
+                  <div>
+                    <h2>{{ group.label }}</h2>
+                    <p class="muted">{{ group.models.length }} 个默认模型</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-wrap compact">
+                <n-table size="small" :bordered="false" single-line class="admin-table model-cost-table">
+                  <thead>
+                    <tr>
+                      <th>模型</th>
+                      <th>成本</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in group.models" :key="item.model">
+                      <td class="mono">{{ item.model }}</td>
+                      <td>
+                        <n-input-number
+                          class="cost-input"
+                          :value="displayCost(item.unitCost)"
+                          :min="0"
+                          :precision="6"
+                          :show-button="false"
+                          :placeholder="costPlaceholder()"
+                          @update:value="(value) => updateDefaultCost(item, value)"
+                        />
+                      </td>
+                      <td>
+                        <n-button text type="error" attr-type="button" @click="removeDefaultCostModel(group, item.model)">删除</n-button>
+                      </td>
+                    </tr>
+                    <tr v-if="group.models.length === 0">
+                      <td class="empty" colspan="3">暂无默认模型</td>
+                    </tr>
+                  </tbody>
+                </n-table>
+              </div>
+
+              <div class="model-input-row">
+                <n-input v-model:value="group.newModel" placeholder="新增模型名" />
+                <n-input-number
+                  class="cost-input"
+                  :value="displayCost(group.newUnitCost)"
+                  :min="0"
+                  :precision="6"
+                  :show-button="false"
+                  :placeholder="costPlaceholder()"
+                  @update:value="(value) => updateNewDefaultCost(group, value)"
+                />
+                <n-button type="primary" attr-type="button" @click="addDefaultCostModel(group)">添加</n-button>
+              </div>
+            </section>
+          </n-spin>
+
+          <div class="model-drawer-footer">
+            <n-button secondary attr-type="button" :disabled="savingDefaultCosts" @click="closeDefaultCostDrawer">取消</n-button>
+            <n-button type="primary" attr-type="button" :disabled="savingDefaultCosts || loadingDefaultCosts" @click="saveDefaultModelCosts">
+              {{ savingDefaultCosts ? '保存中' : '保存默认费用' }}
+            </n-button>
+          </div>
+        </div>
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer
       v-model:show="showModelDrawer"
       placement="right"
       width="min(820px, calc(100vw - 24px))"
@@ -802,11 +1066,35 @@ onMounted(() => {
                 <n-button secondary type="error" attr-type="button" :disabled="loadingModels || accountModels.length === 0" @click="clearModelDraft">清空所有模型</n-button>
               </div>
 
-              <div v-if="accountModels.length > 0" class="model-chip-grid">
-                <div v-for="model in accountModels" :key="model" class="model-chip-item">
-                  <span class="model-chip-name">{{ model }}</span>
-                  <button class="model-chip-remove" type="button" @click="removeModel(model)">×</button>
-                </div>
+              <div v-if="accountModels.length > 0" class="table-wrap compact">
+                <n-table size="small" :bordered="false" single-line class="admin-table model-cost-table">
+                  <thead>
+                    <tr>
+                      <th>模型</th>
+                      <th>成本</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in accountModels" :key="item.model">
+                      <td class="mono">{{ item.model }}</td>
+                      <td>
+                        <n-input-number
+                          class="cost-input"
+                          :value="displayCost(item.unitCost)"
+                          :min="0"
+                          :precision="6"
+                          :show-button="false"
+                          :placeholder="costPlaceholder()"
+                          @update:value="(value) => updateAccountModelCost(item, value)"
+                        />
+                      </td>
+                      <td>
+                        <n-button text type="error" attr-type="button" @click="removeModel(item.model)">删除</n-button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </n-table>
               </div>
               <div v-else class="model-empty">暂无固定模型，保存空列表后该上游账号不会生成自动通道。</div>
             </section>
@@ -875,10 +1163,19 @@ onMounted(() => {
           </n-checkbox>
         </div>
         <div v-if="syncModelOptions.length > 0" class="sync-model-list">
-          <label v-for="model in syncModelOptions" :key="model" class="check-row option-item">
-            <n-checkbox :checked="isSyncModelSelected(model)" @update:checked="(checked) => toggleSyncModel(model, checked)">
-              <span class="mono">{{ model }}</span>
+          <label v-for="item in syncModelOptions" :key="item.model" class="sync-model-row">
+            <n-checkbox :checked="isSyncModelSelected(item.model)" @update:checked="(checked) => toggleSyncModel(item.model, checked)">
+              <span class="mono">{{ item.model }}</span>
             </n-checkbox>
+            <n-input-number
+              class="cost-input"
+              :value="displayCost(item.unitCost)"
+              :min="0"
+              :precision="6"
+              :show-button="false"
+              :placeholder="costPlaceholder()"
+              @update:value="(value) => updateAccountModelCost(item, value)"
+            />
           </label>
         </div>
         <div v-else class="model-empty">未获取到上游模型。</div>
@@ -915,6 +1212,7 @@ onMounted(() => {
         <h2>上游账号列表</h2>
         <div class="actions">
           <n-button type="primary" attr-type="button" @click="openCreateAccount">新增上游账号</n-button>
+          <n-button secondary attr-type="button" @click="openDefaultCostDrawer">默认模型费用</n-button>
           <n-button secondary attr-type="button" :disabled="refreshingAllBalances" @click="refreshAllBalances">
             {{ refreshingAllBalances ? '刷新中' : '刷新全部余额' }}
           </n-button>
@@ -1088,6 +1386,60 @@ onMounted(() => {
   gap: 10px;
 }
 
+.provider-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.provider-mark {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.provider-mark-openai {
+  background: #111827;
+  color: #ffffff;
+}
+
+.provider-mark-claude {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.provider-mark-gemini {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.cost-input {
+  width: 150px;
+  max-width: 100%;
+}
+
+.model-cost-table th:nth-child(2),
+.model-cost-table td:nth-child(2) {
+  width: 180px;
+}
+
+.model-cost-table th:nth-child(3),
+.model-cost-table td:nth-child(3) {
+  width: 80px;
+}
+
+.table-wrap.compact {
+  margin: 0;
+}
+
 .preset-models {
   display: flex;
   flex-wrap: wrap;
@@ -1141,9 +1493,21 @@ onMounted(() => {
   display: grid;
   max-height: min(520px, 60vh);
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   overflow: auto;
   padding-right: 4px;
+}
+
+.sync-model-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
 }
 
 @media (max-width: 700px) {
@@ -1154,6 +1518,16 @@ onMounted(() => {
   }
 
   .model-input-row {
+    flex-direction: column;
+  }
+
+  .cost-input,
+  .sync-model-row {
+    width: 100%;
+  }
+
+  .sync-model-row {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

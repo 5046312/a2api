@@ -29,6 +29,7 @@ export type SelectionCandidateSnapshot = {
   channelId: number;
   accountId: number;
   accountName: string | null;
+  sourceModel: string | null;
   priority: number;
   score: number;
   probability: number;
@@ -95,6 +96,7 @@ type CandidateRow = {
   accountName: string | null;
   accountApiToken: string | null;
   accountUnitCost: number | null;
+  modelUnitCost: number | null;
   accountBaseUrl: string;
   accountPlatform: string;
   accountProxyUrl: string | null;
@@ -191,7 +193,7 @@ export async function selectChannel(
     selectionProbability: selectedCandidate?.probability ?? null,
     selectionCandidates,
     accountToken,
-    accountUnitCost: selected.accountUnitCost,
+    accountUnitCost: selected.modelUnitCost ?? selected.accountUnitCost,
     sourceModel: selected.sourceModel || requestedModel,
     requestedModel
   };
@@ -355,6 +357,7 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
       accountName: schema.accounts.username,
       accountApiToken: schema.accounts.apiToken,
       accountUnitCost: schema.accounts.unitCost,
+      modelUnitCost: schema.modelAvailability.modelCost,
       accountBaseUrl: schema.accounts.baseUrl,
       accountPlatform: schema.accounts.platform,
       accountProxyUrl: schema.accounts.proxyUrl,
@@ -367,6 +370,10 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
     .from(schema.routeChannels)
     .innerJoin(schema.tokenRoutes, eq(schema.tokenRoutes.id, schema.routeChannels.routeId))
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
+    .leftJoin(schema.modelAvailability, and(
+      eq(schema.modelAvailability.accountId, schema.routeChannels.accountId),
+      eq(schema.modelAvailability.modelName, schema.routeChannels.sourceModel)
+    ))
     .leftJoin(schema.accountTokens, eq(schema.accountTokens.id, schema.routeChannels.tokenId))
     .where(and(eq(schema.tokenRoutes.enabled, true), eq(schema.routeChannels.enabled, true), isNull(schema.routeChannels.tokenId)))
     .orderBy(asc(schema.routeChannels.priority), desc(schema.routeChannels.weight), asc(schema.routeChannels.id))
@@ -491,6 +498,7 @@ function buildSelectionCandidateSnapshot(
       channelId: row.channelId,
       accountId: row.accountId,
       accountName: row.accountName,
+      sourceModel: row.sourceModel,
       priority: row.priority,
       score: Number(scoreCandidate(row).toFixed(4)),
       probability,
