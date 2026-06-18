@@ -60,6 +60,12 @@ export type RouteSelectionOptions = {
   forcedChannelId?: number | null;
 };
 
+type ChannelFailureOptions = {
+  cooldownUntil?: string;
+  eventTitle?: string;
+  eventLevel?: 'info' | 'warning' | 'error';
+};
+
 type CandidateRow = {
   routeId: number;
   modelPattern: string;
@@ -280,18 +286,19 @@ export async function recordChannelSuccess(channelId: number, latencyMs: number,
   clearTokenRouterCache();
 }
 
-export async function recordChannelFailure(channelId: number, reason: string): Promise<void> {
+export async function recordChannelFailure(channelId: number, reason: string, options: ChannelFailureOptions = {}): Promise<void> {
   const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
   if (!channel) return;
   const nextFailCount = channel.consecutiveFailCount + 1;
   const cooldownMs = nextFailCount <= 1 ? 30_000 : nextFailCount === 2 ? 5 * 60_000 : 30 * 60_000;
+  const cooldownUntil = options.cooldownUntil ?? new Date(Date.now() + cooldownMs).toISOString();
   await db
     .update(schema.routeChannels)
     .set({
       failCount: sql`${schema.routeChannels.failCount} + 1`,
       consecutiveFailCount: nextFailCount,
       cooldownLevel: Math.min(3, nextFailCount),
-      cooldownUntil: new Date(Date.now() + cooldownMs).toISOString(),
+      cooldownUntil,
       lastFailAt: nowIso()
     })
     .where(eq(schema.routeChannels.id, channelId))
@@ -300,9 +307,9 @@ export async function recordChannelFailure(channelId: number, reason: string): P
 
   await db.insert(schema.events).values({
     type: 'proxy',
-    title: '上游通道进入冷却',
+    title: options.eventTitle ?? '上游通道进入冷却',
     message: reason,
-    level: nextFailCount >= 3 ? 'warning' : 'info',
+    level: options.eventLevel ?? (nextFailCount >= 3 ? 'warning' : 'info'),
     relatedId: channelId,
     relatedType: 'route_channel',
     createdAt: nowIso()

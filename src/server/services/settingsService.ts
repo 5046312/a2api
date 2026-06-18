@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { fetch } from 'undici';
 import { z } from 'zod';
-import { config } from '../config.js';
+import { config, type TemporaryDisableRule } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { isValidCronExpression } from '../shared/cron.js';
 import { fetchDispatcher } from '../shared/http.js';
@@ -22,11 +22,20 @@ const settingKeys = [
   'logCleanupRetentionDays',
   'notificationWebhookEnabled',
   'notificationWebhookUrl',
-  'notifyCooldownSec'
+  'notifyCooldownSec',
+  'temporaryDisableEnabled',
+  'temporaryDisableRules'
 ] as const;
 
 const systemProxyProbeUrl = 'https://www.gstatic.com/generate_204';
 const systemProxyTestTimeoutMs = 15_000;
+
+const temporaryDisableRuleSchema = z.object({
+  statusCode: z.number().int().min(100).max(599),
+  keywords: z.array(z.string().trim().min(1)).min(1),
+  durationMinutes: z.number().int().min(1),
+  description: z.string().trim().optional().default('')
+});
 
 export const settingsPayloadSchema = z.object({
   systemProxyUrl: z.string().trim().optional(),
@@ -41,7 +50,9 @@ export const settingsPayloadSchema = z.object({
   notificationWebhookEnabled: z.boolean().optional(),
   notificationWebhookUrl: z.string().trim().optional(),
   clearNotificationWebhookUrl: z.boolean().optional(),
-  notifyCooldownSec: z.number().int().min(0).optional()
+  notifyCooldownSec: z.number().int().min(0).optional(),
+  temporaryDisableEnabled: z.boolean().optional(),
+  temporaryDisableRules: z.array(temporaryDisableRuleSchema).optional()
 });
 
 export type SettingsPayload = z.infer<typeof settingsPayloadSchema>;
@@ -93,6 +104,17 @@ function normalizeAdminIpAllowlist(value: string[]): string[] {
   return value.map((item) => item.trim()).filter(Boolean);
 }
 
+function normalizeTemporaryDisableRules(value: TemporaryDisableRule[]): TemporaryDisableRule[] {
+  return value
+    .map((rule) => ({
+      statusCode: rule.statusCode,
+      keywords: [...new Set(rule.keywords.map((item) => item.trim()).filter(Boolean))],
+      durationMinutes: rule.durationMinutes,
+      description: rule.description.trim()
+    }))
+    .filter((rule) => rule.keywords.length > 0);
+}
+
 function snapshotFromConfig(): SettingsSnapshot {
   return {
     systemProxyUrl: config.systemProxyUrl,
@@ -107,7 +129,9 @@ function snapshotFromConfig(): SettingsSnapshot {
     notificationWebhookEnabled: config.notificationWebhookEnabled,
     notificationWebhookUrl: '',
     notificationWebhookUrlMasked: maskSecret(config.notificationWebhookUrl),
-    notifyCooldownSec: config.notifyCooldownSec
+    notifyCooldownSec: config.notifyCooldownSec,
+    temporaryDisableEnabled: config.temporaryDisableEnabled,
+    temporaryDisableRules: config.temporaryDisableRules
   };
 }
 
@@ -152,6 +176,14 @@ function applySettings(payload: SettingsPayload): void {
   if (payload.clearNotificationWebhookUrl) config.notificationWebhookUrl = '';
   if (payload.notificationWebhookUrl !== undefined) config.notificationWebhookUrl = resolveNotificationWebhookUrl(payload.notificationWebhookUrl);
   if (payload.notifyCooldownSec !== undefined) config.notifyCooldownSec = payload.notifyCooldownSec;
+  if (payload.temporaryDisableEnabled !== undefined) {
+    config.temporaryDisableEnabled = payload.temporaryDisableEnabled;
+    clearTokenRouterCache();
+  }
+  if (payload.temporaryDisableRules !== undefined) {
+    config.temporaryDisableRules = normalizeTemporaryDisableRules(payload.temporaryDisableRules);
+    clearTokenRouterCache();
+  }
   if (payload.tokenRouterCacheTtlMs !== undefined) {
     config.tokenRouterCacheTtlMs = payload.tokenRouterCacheTtlMs;
     clearTokenRouterCache();
@@ -206,6 +238,14 @@ function validateLogCleanupSettings(payload: SettingsPayload): SettingsPayload {
   const next: SettingsPayload = { ...payload };
   if (payload.logCleanupRetentionDays !== undefined) {
     next.logCleanupRetentionDays = normalizeRetentionDays(payload.logCleanupRetentionDays);
+  }
+  return next;
+}
+
+function validateTemporaryDisableSettings(payload: SettingsPayload): SettingsPayload {
+  const next: SettingsPayload = { ...payload };
+  if (payload.temporaryDisableRules !== undefined) {
+    next.temporaryDisableRules = normalizeTemporaryDisableRules(payload.temporaryDisableRules);
   }
   return next;
 }
@@ -307,7 +347,9 @@ export function updateSettings(payload: SettingsPayload): SettingsSnapshot {
   }
   const normalized: SettingsPayload = validateLogCleanupSettings(
     validateBalanceRefreshCron(
-      validateNotificationSettings(normalizedAdminPayload)
+      validateNotificationSettings(
+        validateTemporaryDisableSettings(normalizedAdminPayload)
+      )
     )
   );
 

@@ -3,6 +3,13 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyServerOptions } from 'fastify';
 
+export type TemporaryDisableRule = {
+  statusCode: number;
+  keywords: string[];
+  durationMinutes: number;
+  description: string;
+};
+
 export type AppConfig = {
   authToken: string;
   proxyToken: string;
@@ -23,6 +30,8 @@ export type AppConfig = {
   notificationWebhookEnabled: boolean;
   notificationWebhookUrl: string;
   notifyCooldownSec: number;
+  temporaryDisableEnabled: boolean;
+  temporaryDisableRules: TemporaryDisableRule[];
 };
 
 function parseNumber(value: string | undefined, fallback: number): number {
@@ -93,7 +102,9 @@ export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
     logCleanupRetentionDays: Math.max(1, Math.trunc(parseNumber(env.LOG_CLEANUP_RETENTION_DAYS, 30))),
     notificationWebhookEnabled: parseBoolean(env.WEBHOOK_ENABLED, false),
     notificationWebhookUrl: env.WEBHOOK_URL?.trim() || '',
-    notifyCooldownSec: Math.max(0, Math.trunc(parseNumber(env.NOTIFY_COOLDOWN_SEC, 300)))
+    notifyCooldownSec: Math.max(0, Math.trunc(parseNumber(env.NOTIFY_COOLDOWN_SEC, 300))),
+    temporaryDisableEnabled: false,
+    temporaryDisableRules: []
   };
 }
 

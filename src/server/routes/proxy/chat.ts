@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { fetch, type Headers, type Response } from 'undici';
 import { z } from 'zod';
-import { config } from '../../config.js';
+import { config, type TemporaryDisableRule } from '../../config.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
 import { recordManagedKeyCostUsage } from '../../services/downstreamKeyService.js';
 import {
@@ -38,6 +38,11 @@ type UsageSummary = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+};
+type TemporaryDisableMatch = {
+  rule: TemporaryDisableRule;
+  ruleIndex: number;
+  matchedKeyword: string;
 };
 
 export type OpenAiProxyEndpointOptions = {
@@ -256,14 +261,30 @@ async function callUpstreamChat(input: {
       if (!response.ok) {
         const text = await response.text();
         const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
+        // 配额、限流等业务错误命中规则后，临时冷却当前通道并交给外层继续尝试下一通道。
+        const temporaryDisableMatch = matchTemporaryDisableRule(response.status, text);
+        const temporaryDisableUntil = temporaryDisableMatch
+          ? new Date(Date.now() + temporaryDisableMatch.rule.durationMinutes * 60_000).toISOString()
+          : null;
+        const temporaryDisableReason = temporaryDisableMatch && temporaryDisableUntil
+          ? buildTemporaryDisableReason(error, temporaryDisableMatch, temporaryDisableUntil)
+          : null;
         lastEndpointError = error;
         const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
         await recordProxyDebugAttempt({
           ...attemptRecord,
           responseStatus: response.status,
           responseHeaders: headersToRecord(response.headers),
-          rawErrorText: error
+          rawErrorText: temporaryDisableReason ?? error
         });
+        if (temporaryDisableMatch && temporaryDisableUntil && temporaryDisableReason) {
+          await recordChannelFailure(input.selected.channelId, temporaryDisableReason, {
+            cooldownUntil: temporaryDisableUntil,
+            eventTitle: '上游通道临时禁用',
+            eventLevel: 'warning'
+          });
+          return { done: false, error: temporaryDisableReason };
+        }
         if (endpointFailure.retryable && target.endpointId !== null) {
           excludedEndpointIds.push(target.endpointId);
           continue;
@@ -552,6 +573,23 @@ function buildAttemptRecordInput(
 
 function isRetryableUpstreamStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function matchTemporaryDisableRule(status: number, rawText: string): TemporaryDisableMatch | null {
+  if (!config.temporaryDisableEnabled) return null;
+  const text = rawText.toLowerCase();
+  for (let index = 0; index < config.temporaryDisableRules.length; index += 1) {
+    const rule = config.temporaryDisableRules[index]!;
+    if (rule.statusCode !== status) continue;
+    const matchedKeyword = rule.keywords.find((keyword) => text.includes(keyword.toLowerCase()));
+    if (matchedKeyword) return { rule, ruleIndex: index, matchedKeyword };
+  }
+  return null;
+}
+
+function buildTemporaryDisableReason(error: string, match: TemporaryDisableMatch, cooldownUntil: string): string {
+  const description = match.rule.description ? `，${match.rule.description}` : '';
+  return `${error}；命中临时禁用规则 #${match.ruleIndex + 1}：HTTP ${match.rule.statusCode} / ${match.matchedKeyword}${description}，冷却至 ${cooldownUntil}`;
 }
 
 function buildChannelExhaustedError(input: {

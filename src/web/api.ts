@@ -434,6 +434,13 @@ export type SettingsSnapshot = {
   notificationWebhookUrl: string;
   notificationWebhookUrlMasked: string;
   notifyCooldownSec: number;
+  temporaryDisableEnabled: boolean;
+  temporaryDisableRules: Array<{
+    statusCode: number;
+    keywords: string[];
+    durationMinutes: number;
+    description: string;
+  }>;
 };
 
 export type SystemProxyTestResult = {
