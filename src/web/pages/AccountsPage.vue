@@ -790,7 +790,7 @@ onMounted(() => {
     >
       <n-drawer-content :title="modelDrawerAccount ? `上游账号模型：${accountLabel(modelDrawerAccount)}` : '上游账号模型'" :closable="!savingModels && !syncingModels">
         <div class="model-drawer-stack">
-          <p class="muted">维护该上游账号固定可用模型。保存后会重建模型。</p>
+          <p class="muted">维护该上游账号固定可用模型。保存后会自动重建模型。</p>
 
           <n-spin :show="loadingModels">
             <section class="model-drawer-section">

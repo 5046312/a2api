@@ -24,6 +24,34 @@ const routingStrategyOptions: Array<{ label: string; value: RoutingStrategy }> =
   { label: '加权随机', value: 'weighted' },
   { label: '稳定优先', value: 'stable_first' }
 ];
+const routeModeMeta: Record<string, { label: string; description: string }> = {
+  exact: {
+    label: '精确匹配',
+    description: '只匹配与模型名完全一致的请求。'
+  },
+  pattern: {
+    label: '通配匹配',
+    description: '支持 * 和 ? 通配符，可覆盖一组相近模型名。'
+  },
+  regex: {
+    label: '正则匹配',
+    description: '按正则表达式匹配模型名，适合更复杂的规则。'
+  },
+  explicit_group: {
+    label: '显式分组',
+    description: '使用预设来源路由集合聚合多个模型通道。'
+  }
+};
+const routingStrategyMeta: Record<RoutingStrategy, { label: string; description: string }> = {
+  weighted: {
+    label: '加权随机',
+    description: '先按优先级筛选，再结合权重和失败惩罚按概率选择通道。'
+  },
+  stable_first: {
+    label: '稳定优先',
+    description: '先按优先级筛选，再固定选择当前最高分通道，失败或冷却后再切换。'
+  }
+};
 const hasCoolingChannel = computed(() => channels.value.some((channel) => isCooling(channel)));
 const strategyAlert = computed(() => {
   if (routeStrategy.value === 'stable_first') {
@@ -50,6 +78,22 @@ watch(hasCoolingChannel, syncCooldownTimer);
 
 function normalizeRoutingStrategy(value: string | null | undefined): RoutingStrategy {
   return value === 'stable_first' ? 'stable_first' : 'weighted';
+}
+
+function routeModeLabel(value: string) {
+  return routeModeMeta[value]?.label || value;
+}
+
+function routeModeDescription(value: string) {
+  return routeModeMeta[value]?.description || value;
+}
+
+function routingStrategyLabel(value: string) {
+  return routingStrategyMeta[value as RoutingStrategy]?.label || value;
+}
+
+function routingStrategyDescription(value: string) {
+  return routingStrategyMeta[value as RoutingStrategy]?.description || value;
 }
 
 function setError(err: unknown, fallback: string) {
@@ -159,18 +203,6 @@ async function loadRoutes() {
     setError(err, '加载模型失败');
   } finally {
     loading.value = false;
-  }
-}
-
-async function rebuild() {
-  error.value = '';
-  message.value = '';
-  try {
-    await api.rebuildRoutes();
-    message.value = '模型已重建';
-    await loadRoutes();
-  } catch (err) {
-    setError(err, '重建模型失败');
   }
 }
 
@@ -304,7 +336,6 @@ onBeforeUnmount(() => {
         </div>
         <div class="actions">
           <n-button secondary attr-type="button" @click="loadRoutes">刷新</n-button>
-          <n-button type="primary" attr-type="button" @click="rebuild">重建模型</n-button>
         </div>
       </div>
       <div class="explain-grid">
@@ -318,8 +349,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="button-help">
-        <span><strong>刷新</strong>：重新读取列表，不改数据。</span>
-        <span><strong>重建模型</strong>：按上游账号可用模型重新生成模型和通道。</span>
+        <span><strong>刷新</strong>：重新读取列表，必要时会自动对齐模型和通道。</span>
         <span><strong>通道</strong>：查看可转发上游账号，并维护策略和决策解释。</span>
         <span><strong>停用/启用</strong>：控制该模型是否参与转发。</span>
         <span><strong>清冷却</strong>：清除该模型下通道的失败冷却。</span>
@@ -342,8 +372,28 @@ onBeforeUnmount(() => {
             <tr v-for="route in routes" :key="route.id" :class="{ selected: selectedRoute?.id === route.id }">
               <td class="mono">{{ route.modelPattern }}</td>
               <td>{{ route.displayName || '-' }}</td>
-              <td>{{ route.routeMode }}</td>
-              <td>{{ route.routingStrategy }}</td>
+              <td>
+                <span class="label-with-help">
+                  <span>{{ routeModeLabel(route.routeMode) }}</span>
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <span class="help-mark">？</span>
+                    </template>
+                    <span class="tooltip-text">{{ routeModeDescription(route.routeMode) }}</span>
+                  </n-tooltip>
+                </span>
+              </td>
+              <td>
+                <span class="label-with-help">
+                  <span>{{ routingStrategyLabel(route.routingStrategy) }}</span>
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <span class="help-mark">？</span>
+                    </template>
+                    <span class="tooltip-text">{{ routingStrategyDescription(route.routingStrategy) }}</span>
+                  </n-tooltip>
+                </span>
+              </td>
               <td>{{ route.channelCount }}</td>
               <td>{{ route.successCount }} / {{ route.failCount }}</td>
               <td>
@@ -530,6 +580,26 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.help-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #64748b;
+  cursor: help;
+  font-size: 12px;
+  line-height: 1;
+  border: 1px solid #cbd5e1;
 }
 
 .info-icon {

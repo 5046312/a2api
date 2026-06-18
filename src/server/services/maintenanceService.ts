@@ -88,7 +88,7 @@ export function clearRuntimeCache(): ClearRuntimeCacheResult {
   const deletedTokenRoutes = db.delete(schema.tokenRoutes).run().changes;
   clearTokenRouterCache();
 
-  const message = '缓存已清理，请重新刷新模型或重建模型';
+  const message = '缓存已清理，请重新刷新模型，系统会自动重建通道';
   recordMaintenanceEvent(
     '缓存已清理',
     `已清理模型可用性 ${deletedModelAvailability} 条、Token 模型可用性 ${deletedTokenModelAvailability} 条、模型 ${deletedTokenRoutes} 条、通道 ${deletedRouteChannels} 条`

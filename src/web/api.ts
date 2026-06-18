@@ -319,6 +319,14 @@ export type ClearProxyLogsResult = {
   deletedProxyDebugAttempts: number;
 };
 
+export type ClearProxyDebugTracesResult = {
+  ok: boolean;
+  from: string;
+  to: string;
+  deletedProxyDebugTraces: number;
+  deletedProxyDebugAttempts: number;
+};
+
 export type ProxyDebugAttempt = {
   id: number;
   traceId: number;
@@ -861,6 +869,8 @@ export const api = {
       buildQuery('/api/proxy-debug-traces', query)
     ),
   getProxyDebugTrace: (id: number) => apiRequest<ProxyDebugTrace>(`/api/proxy-debug-traces/${id}`),
+  clearProxyDebugTraces: (body: { from: string; to: string }) =>
+    apiRequest<ClearProxyDebugTracesResult>('/api/proxy-debug-traces', { method: 'DELETE', body }),
   getSettings: () => apiRequest<SettingsSnapshot>('/api/settings'),
   getRuntimeSettings: () => apiRequest<SettingsSnapshot>('/api/settings/runtime'),
   getBrandList: () => apiRequest<{ brands: string[] }>('/api/settings/brand-list'),

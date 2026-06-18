@@ -362,14 +362,62 @@ onMounted(loadKeys);
             <span>名称</span>
             <n-input v-model:value="form.name" required />
           </label>
-          <label class="field">
-            <span>模型范围</span>
-            <n-select v-model:value="form.modelScope" :options="modelScopeOptions" />
-          </label>
-          <label class="field">
-            <span>上游账号范围</span>
-            <n-select v-model:value="form.accountScope" :options="accountScopeOptions" />
-          </label>
+          <div class="field field-stack">
+            <label class="field">
+              <span>模型范围</span>
+              <n-select v-model:value="form.modelScope" :options="modelScopeOptions" />
+            </label>
+            <div v-if="form.modelScope === 'selected'" class="field">
+              <span>允许模型</span>
+              <div class="option-grid">
+                <label v-for="route in routes" :key="route.id" class="check-row option-item">
+                  <n-checkbox
+                    :checked="form.allowedRouteIds.includes(route.id)"
+                    @update:checked="(checked) => updateNumberSelection(form.allowedRouteIds, route.id, checked)"
+                  >
+                    {{ route.displayName || route.modelPattern }}
+                  </n-checkbox>
+                </label>
+                <p v-if="routes.length === 0" class="muted">暂无模型</p>
+              </div>
+            </div>
+          </div>
+          <div class="field field-stack">
+            <label class="field">
+              <span>上游账号范围</span>
+              <n-select v-model:value="form.accountScope" :options="accountScopeOptions" />
+            </label>
+            <template v-if="form.accountScope === 'selected'">
+              <div class="field">
+                <span>允许上游账号</span>
+                <div class="option-grid">
+                  <label v-for="account in accounts" :key="account.id" class="check-row option-item">
+                    <n-checkbox
+                      :checked="form.allowedAccountIds.includes(account.id)"
+                      @update:checked="(checked) => updateNumberSelection(form.allowedAccountIds, account.id, checked)"
+                    >
+                      {{ accountLabel(account) }}
+                    </n-checkbox>
+                  </label>
+                  <p v-if="accounts.length === 0" class="muted">暂无上游账号</p>
+                </div>
+              </div>
+              <div class="field">
+                <span>排除上游账号</span>
+                <div class="option-grid">
+                  <label v-for="account in accounts" :key="account.id" class="check-row option-item">
+                    <n-checkbox
+                      :checked="form.excludedAccountIds.includes(account.id)"
+                      @update:checked="(checked) => updateNumberSelection(form.excludedAccountIds, account.id, checked)"
+                    >
+                      {{ accountLabel(account) }}
+                    </n-checkbox>
+                  </label>
+                  <p v-if="accounts.length === 0" class="muted">暂无上游账号</p>
+                </div>
+              </div>
+            </template>
+          </div>
           <label class="field">
             <span>最大请求数</span>
             <n-input v-model:value="form.maxRequests" placeholder="不限" />
@@ -389,50 +437,6 @@ onMounted(loadKeys);
             <span>说明</span>
             <n-input v-model:value="form.description" placeholder="可选" />
           </label>
-          <div v-if="form.modelScope === 'selected'" class="field">
-            <span>允许模型</span>
-            <div class="option-grid">
-              <label v-for="route in routes" :key="route.id" class="check-row option-item">
-                <n-checkbox
-                  :checked="form.allowedRouteIds.includes(route.id)"
-                  @update:checked="(checked) => updateNumberSelection(form.allowedRouteIds, route.id, checked)"
-                >
-                  {{ route.displayName || route.modelPattern }}
-                </n-checkbox>
-              </label>
-              <p v-if="routes.length === 0" class="muted">暂无模型</p>
-            </div>
-          </div>
-          <template v-if="form.accountScope === 'selected'">
-            <div class="field">
-              <span>允许上游账号</span>
-              <div class="option-grid">
-                <label v-for="account in accounts" :key="account.id" class="check-row option-item">
-                  <n-checkbox
-                    :checked="form.allowedAccountIds.includes(account.id)"
-                    @update:checked="(checked) => updateNumberSelection(form.allowedAccountIds, account.id, checked)"
-                  >
-                    {{ accountLabel(account) }}
-                  </n-checkbox>
-                </label>
-                <p v-if="accounts.length === 0" class="muted">暂无上游账号</p>
-              </div>
-            </div>
-            <div class="field">
-              <span>排除上游账号</span>
-              <div class="option-grid">
-                <label v-for="account in accounts" :key="account.id" class="check-row option-item">
-                  <n-checkbox
-                    :checked="form.excludedAccountIds.includes(account.id)"
-                    @update:checked="(checked) => updateNumberSelection(form.excludedAccountIds, account.id, checked)"
-                  >
-                    {{ accountLabel(account) }}
-                  </n-checkbox>
-                </label>
-                <p v-if="accounts.length === 0" class="muted">暂无上游账号</p>
-              </div>
-            </div>
-          </template>
           <div class="form-actions">
             <n-button type="primary" attr-type="submit" :disabled="saving">
               {{ saving ? '保存中' : editingKeyId ? '保存修改' : '创建密钥' }}
@@ -536,6 +540,12 @@ onMounted(loadKeys);
 </template>
 
 <style scoped lang="scss">
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .option-grid {
   display: grid;
   gap: 8px;

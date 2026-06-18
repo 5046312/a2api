@@ -15,7 +15,7 @@ P0 implemented:
 - Admin auth failure rate limit with `Retry-After`.
 - Unified upstream account management for API endpoint, API Key, platform, models, downstream keys, and proxy logs.
 - Upstream account create and edit right-side drawer UI for API endpoint, API Key, platform, authentication mode, account-level proxy, unit cost, status, pinned state, and sort order.
-- Upstream account model drawer for fixed account model lists, upstream model preview selection, and route rebuild after model changes.
+- Upstream account model drawer for fixed account model lists, upstream model preview selection, and automatic route rebuild after model changes.
 - Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
 - Upstream account API Key is stored on the account; legacy key-list rows are only read as old-data fallback and are not used to generate model channels.
 - Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
@@ -69,7 +69,7 @@ P0 implemented:
 - External client config snippets for OpenAI-compatible clients, Cherry Studio, Roo/Kilo Code, Claude Code, Codex CLI, Claude Code Router, and CC Switch.
 - Maintenance factory reset for clearing runtime business data while preserving environment credentials and database path.
 - Native monitor page for upstream account status, heartbeat bars, uptime, manual checks, and monitor settings.
-- Model rebuild, channel cooldown, failover, and proxy log writes.
+- Automatic model rebuild, channel cooldown, failover, and proxy log writes.
 - Docker Compose service mode.
 
 Remaining P2/P3 areas are intentionally not folded into this first implementation: Gemini native `countTokens` compatibility, Search web-search simulation, full provider-native OAuth token exchange, persistent OAuth sessions, rebind flow, provider-specific quota semantics, full route group runtime expansion, multi-database runtime, Tauri desktop shell, and advanced analytics.

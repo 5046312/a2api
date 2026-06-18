@@ -12,7 +12,6 @@ import ModelsPage from '@pages/ModelsPage.vue';
 import MonitorPage from '@pages/MonitorPage.vue';
 import NotificationsPage from '@pages/NotificationsPage.vue';
 import OAuthPage from '@pages/OAuthPage.vue';
-import ProgramLogsPage from '@pages/ProgramLogsPage.vue';
 import ProxyLogsPage from '@pages/ProxyLogsPage.vue';
 import RoutesPage from '@pages/RoutesPage.vue';
 import SettingsPage from '@pages/SettingsPage.vue';
@@ -24,7 +23,6 @@ export const adminRouteNames = {
   routes: 'routes',
   downstreamKeys: 'downstreamKeys',
   proxyLogs: 'proxyLogs',
-  programLogs: 'programLogs',
   models: 'models',
   modelTester: 'modelTester',
   monitor: 'monitor',
@@ -63,12 +61,6 @@ export const adminRoutes: AdminRouteRecord[] = [
     name: adminRouteNames.proxyLogs,
     component: ProxyLogsPage,
     meta: { title: '日志', nav: true }
-  },
-  {
-    path: '/program-logs',
-    name: adminRouteNames.programLogs,
-    component: ProgramLogsPage,
-    meta: { title: '程序日志', nav: true }
   },
   { path: '/models', name: adminRouteNames.models, component: ModelsPage, meta: { title: '广场', nav: true } },
   {

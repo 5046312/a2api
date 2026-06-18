@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyDebugTraceListItem, type ProxyLog } from '@web/api';
 
+type CleanupTarget = 'proxyLogs' | 'debugTraces';
+
 const PAGE_SIZE = 20;
 const accounts = ref<Account[]>([]);
 const downstreamKeys = ref<DownstreamKey[]>([]);
@@ -11,7 +13,7 @@ const traces = ref<ProxyDebugTraceListItem[]>([]);
 const selectedLog = ref<ProxyLog | null>(null);
 const selectedTrace = ref<ProxyDebugTrace | null>(null);
 const detailDrawerVisible = ref(false);
-const activeTab = ref<'proxyLogs' | 'debugTraces'>('proxyLogs');
+const activeTab = ref<CleanupTarget>('proxyLogs');
 const loading = ref(false);
 const loadingDetailId = ref<number | null>(null);
 const loadingTrace = ref(false);
@@ -22,6 +24,7 @@ const logsTotal = ref(0);
 const tracesPage = ref(1);
 const tracesTotal = ref(0);
 const cleanupModalVisible = ref(false);
+const cleanupTarget = ref<CleanupTarget>('proxyLogs');
 const cleanupRange = ref<[number, number] | null>(null);
 const cleanupLoading = ref(false);
 const filters = reactive({
@@ -81,6 +84,12 @@ const detailDrawerTitle = computed(() => {
   return '详情';
 });
 const cleanupConfirmDisabled = computed(() => !cleanupRange.value || cleanupRange.value.length !== 2 || cleanupLoading.value);
+const cleanupTitle = computed(() => cleanupTarget.value === 'debugTraces' ? '清空 Debug Trace' : '清空请求记录');
+const cleanupDescription = computed(() => (
+  cleanupTarget.value === 'debugTraces'
+    ? '请选择要清空的 Debug Trace 时间范围，确认后会同步删除对应尝试记录。'
+    : '请选择要清空的请求记录时间范围，确认后会同步删除关联 Debug Trace。'
+));
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -167,8 +176,9 @@ function setCleanupShortcut(getRange: () => [number, number]) {
   cleanupRange.value = getRange();
 }
 
-function openCleanupModal() {
+function openCleanupModal(target: CleanupTarget) {
   error.value = '';
+  cleanupTarget.value = target;
   cleanupRange.value = null;
   cleanupModalVisible.value = true;
 }
@@ -201,6 +211,32 @@ async function confirmClearProxyLogs() {
   } finally {
     cleanupLoading.value = false;
   }
+}
+
+async function confirmClearDebugTraces() {
+  const range = resolveCleanupIsoRange();
+  if (!range) {
+    notice.error('请选择有效的清空时间范围');
+    return;
+  }
+  cleanupLoading.value = true;
+  error.value = '';
+  try {
+    const result = await api.clearProxyDebugTraces(range);
+    notice.success(`已清空 ${result.deletedProxyDebugTraces} 条 Debug Trace`);
+    cleanupModalVisible.value = false;
+    await reloadTraces();
+  } catch (err) {
+    setError(err, '清空 Debug Trace 失败');
+  } finally {
+    cleanupLoading.value = false;
+  }
+}
+
+function confirmCleanup() {
+  return cleanupTarget.value === 'debugTraces'
+    ? confirmClearDebugTraces()
+    : confirmClearProxyLogs();
 }
 
 async function loadPage() {
@@ -352,7 +388,7 @@ onMounted(loadPage);
             </div>
             <div class="actions">
               <n-button secondary attr-type="button" @click="loadLogs">刷新</n-button>
-              <n-button secondary type="error" attr-type="button" @click="openCleanupModal">重置</n-button>
+              <n-button secondary type="error" attr-type="button" @click="openCleanupModal('proxyLogs')">重置</n-button>
             </div>
           </div>
           <div class="table-wrap">
@@ -420,7 +456,10 @@ onMounted(loadPage);
               <h2>Debug Trace</h2>
               <p class="muted">独立查看代理尝试、上游状态和失败原因。</p>
             </div>
-            <n-button secondary attr-type="button" @click="loadTraces">刷新 Trace</n-button>
+            <div class="actions">
+              <n-button secondary attr-type="button" @click="loadTraces">刷新 Trace</n-button>
+              <n-button secondary type="error" attr-type="button" @click="openCleanupModal('debugTraces')">重置</n-button>
+            </div>
           </div>
           <div class="table-wrap">
             <n-table size="small" :bordered="false" single-line class="admin-table">
@@ -472,12 +511,12 @@ onMounted(loadPage);
     <n-modal
       v-model:show="cleanupModalVisible"
       preset="card"
-      title="清空请求记录"
+      :title="cleanupTitle"
       :bordered="false"
       style="width: min(560px, calc(100vw - 32px))"
     >
       <div class="cleanup-panel">
-        <p class="muted">请选择要清空的请求记录时间范围，确认后会同步删除关联 Debug Trace。</p>
+        <p class="muted">{{ cleanupDescription }}</p>
         <div class="shortcut-row">
           <n-button
             v-for="item in cleanupShortcutOptions"
@@ -507,7 +546,7 @@ onMounted(loadPage);
             attr-type="button"
             :loading="cleanupLoading"
             :disabled="cleanupConfirmDisabled"
-            @click="confirmClearProxyLogs"
+            @click="confirmCleanup"
           >
             确定清空
           </n-button>

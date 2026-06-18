@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { db, schema, sqlite } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 
@@ -37,6 +37,14 @@ export type FinalizeProxyDebugTraceInput = {
   finalHttpStatus?: number | null;
   finalUpstreamPath?: string | null;
   finalResponseHeaders?: Record<string, string | string[] | undefined> | null;
+};
+
+export type ClearProxyDebugTracesResult = {
+  ok: boolean;
+  from: string;
+  to: string;
+  deletedProxyDebugTraces: number;
+  deletedProxyDebugAttempts: number;
 };
 
 export async function createProxyDebugTrace(input: CreateProxyDebugTraceInput): Promise<number> {
@@ -184,6 +192,35 @@ export async function getProxyDebugTraceDetail(id: number) {
       requestHeaders: parseJsonObject(attempt.requestHeadersJson),
       responseHeaders: parseJsonObject(attempt.responseHeadersJson)
     }))
+  };
+}
+
+export function clearProxyDebugTracesByRange(input: { from: string; to: string }): ClearProxyDebugTracesResult {
+  const deleted = sqlite.transaction(() => {
+    // 先删尝试记录，再删 trace 主记录，兼容未启用外键级联的 SQLite 运行环境。
+    const deletedProxyDebugAttempts = sqlite.prepare(`
+DELETE FROM proxy_debug_attempts
+WHERE trace_id IN (
+  SELECT id FROM proxy_debug_traces WHERE created_at >= ? AND created_at <= ?
+)
+`).run(input.from, input.to).changes;
+
+    const deletedProxyDebugTraces = sqlite.prepare(`
+DELETE FROM proxy_debug_traces
+WHERE created_at >= ? AND created_at <= ?
+`).run(input.from, input.to).changes;
+
+    return {
+      deletedProxyDebugTraces,
+      deletedProxyDebugAttempts
+    };
+  })();
+
+  return {
+    ok: true,
+    from: input.from,
+    to: input.to,
+    ...deleted
   };
 }
 

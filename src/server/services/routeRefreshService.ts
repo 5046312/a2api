@@ -122,6 +122,53 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
   return { routesCreated, routesUpdated, channelsCreated, channelsUpdated, channelsRemoved: staleIds.length };
 }
 
+export async function rebuildRoutesIfNeeded(): Promise<RouteRebuildResult | null> {
+  const availabilityRows = await db
+    .select({
+      modelName: schema.modelAvailability.modelName,
+      accountId: schema.modelAvailability.accountId,
+      accountStatus: schema.accounts.status
+    })
+    .from(schema.modelAvailability)
+    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.modelAvailability.accountId))
+    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active')))
+    .all();
+
+  const routeRows = await db
+    .select({
+      id: schema.tokenRoutes.id,
+      modelPattern: schema.tokenRoutes.modelPattern
+    })
+    .from(schema.tokenRoutes)
+    .where(eq(schema.tokenRoutes.manualOverride, false))
+    .all();
+  const routeByModel = new Map(routeRows.map((row) => [row.modelPattern, row.id]));
+
+  const desiredKeys = new Set<string>();
+  for (const row of availabilityRows) {
+    const routeId = routeByModel.get(row.modelName);
+    if (!routeId) return rebuildRoutes({ preserveManual: true });
+    desiredKeys.add(channelKey({ routeId, accountId: row.accountId, tokenId: null, sourceModel: row.modelName }));
+  }
+
+  const autoChannels = await db
+    .select({
+      routeId: schema.routeChannels.routeId,
+      accountId: schema.routeChannels.accountId,
+      tokenId: schema.routeChannels.tokenId,
+      sourceModel: schema.routeChannels.sourceModel
+    })
+    .from(schema.routeChannels)
+    .where(eq(schema.routeChannels.manualOverride, false))
+    .all();
+  const existingKeys = new Set(autoChannels.map(channelKey));
+  if (desiredKeys.size !== existingKeys.size) return rebuildRoutes({ preserveManual: true });
+  for (const key of desiredKeys) {
+    if (!existingKeys.has(key)) return rebuildRoutes({ preserveManual: true });
+  }
+  return null;
+}
+
 async function findAutoChannel(item: DesiredChannel) {
   const filters = [
     eq(schema.routeChannels.routeId, item.routeId),

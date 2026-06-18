@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { clearProxyLogsByRange, getProxyLog, listProxyLogs } from '../../services/proxyLogService.js';
-import { getProxyDebugTraceDetail, listProxyDebugTraces } from '../../services/proxyDebugTraceService.js';
+import { clearProxyDebugTracesByRange, getProxyDebugTraceDetail, listProxyDebugTraces } from '../../services/proxyDebugTraceService.js';
 import { sendError } from '../../shared/errors.js';
 import { compactObject } from '../../shared/object.js';
 import { optionalBooleanQuery } from '../../shared/query.js';
@@ -66,5 +66,24 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
     const trace = await getProxyDebugTraceDetail(params.id);
     if (!trace) return sendError(reply, 404, 'validation_error', 'Proxy debug trace not found', 'proxy_debug_trace_not_found');
     return trace;
+  });
+
+  app.delete('/api/proxy-debug-traces', async (request, reply) => {
+    const body = z.object({
+      from: z.string().min(1),
+      to: z.string().min(1)
+    }).parse(request.body);
+    const fromMs = Date.parse(body.from);
+    const toMs = Date.parse(body.to);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+      return sendError(reply, 400, 'validation_error', 'Invalid clear time range', 'invalid_proxy_debug_trace_clear_range');
+    }
+    if (fromMs > toMs) {
+      return sendError(reply, 400, 'validation_error', 'Clear range start must be before end', 'invalid_proxy_debug_trace_clear_range');
+    }
+    return clearProxyDebugTracesByRange({
+      from: new Date(fromMs).toISOString(),
+      to: new Date(toMs).toISOString()
+    });
   });
 }

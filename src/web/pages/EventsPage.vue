@@ -3,7 +3,11 @@ import { onMounted, reactive, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
 import { api, type EventItem } from '@web/api';
 
+const PAGE_SIZE = 50;
+
 const events = ref<EventItem[]>([]);
+const total = ref(0);
+const page = ref(1);
 const unreadCount = ref(0);
 const loading = ref(false);
 const error = ref('');
@@ -63,7 +67,8 @@ async function loadEvents() {
   try {
     const [eventData, countData] = await Promise.all([
       api.listEvents({
-        pageSize: 50,
+        page: page.value,
+        pageSize: PAGE_SIZE,
         type: filters.type,
         level: filters.level,
         read: readQueryValue()
@@ -71,12 +76,23 @@ async function loadEvents() {
       api.getEventCount()
     ]);
     events.value = eventData.items;
+    total.value = eventData.total;
     unreadCount.value = countData.count;
   } catch (err) {
     setError(err, '加载事件失败');
   } finally {
     loading.value = false;
   }
+}
+
+function reloadEvents() {
+  page.value = 1;
+  return loadEvents();
+}
+
+async function handlePageChange(nextPage: number) {
+  page.value = nextPage;
+  await loadEvents();
 }
 
 async function markRead(item: EventItem) {
@@ -97,7 +113,7 @@ async function markAllRead() {
   try {
     const result = await api.markAllEventsRead();
     message.value = `已标记 ${result.updated} 条事件`;
-    await loadEvents();
+    await reloadEvents();
   } catch (err) {
     setError(err, '标记全部失败');
   }
@@ -115,7 +131,7 @@ async function clearAll() {
       try {
         const result = await api.clearEvents();
         message.value = `已清空 ${result.deleted} 条事件`;
-        await loadEvents();
+        await reloadEvents();
       } catch (err) {
         setError(err, '清空事件失败');
       }
@@ -132,18 +148,18 @@ onMounted(loadEvents);
       <div class="panel-header">
         <div>
           <h2>系统事件</h2>
-          <p class="muted">未读 {{ unreadCount }} 条；用于查看通道冷却、代理失败等运行事件。</p>
+          <p class="muted">共 {{ total }} 条；未读 {{ unreadCount }} 条；用于查看通道冷却、代理失败等运行事件。</p>
         </div>
         <div class="actions">
-          <n-button secondary attr-type="button" @click="loadEvents">刷新</n-button>
+          <n-button secondary attr-type="button" @click="reloadEvents">刷新</n-button>
           <n-button secondary attr-type="button" @click="markAllRead">全部已读</n-button>
           <n-button secondary attr-type="button" @click="clearAll">清空</n-button>
         </div>
       </div>
       <div class="toolbar">
-        <n-select v-model:value="filters.type" :options="eventTypeOptions" class="toolbar-select" @update:value="loadEvents" />
-        <n-select v-model:value="filters.level" :options="eventLevelOptions" class="toolbar-select" @update:value="loadEvents" />
-        <n-select v-model:value="filters.read" :options="readOptions" class="toolbar-select" @update:value="loadEvents" />
+        <n-select v-model:value="filters.type" :options="eventTypeOptions" class="toolbar-select" @update:value="reloadEvents" />
+        <n-select v-model:value="filters.level" :options="eventLevelOptions" class="toolbar-select" @update:value="reloadEvents" />
+        <n-select v-model:value="filters.read" :options="readOptions" class="toolbar-select" @update:value="reloadEvents" />
       </div>
       <div class="table-wrap">
         <n-table size="small" :bordered="false" single-line class="admin-table">
@@ -178,6 +194,22 @@ onMounted(loadEvents);
           </tbody>
         </n-table>
       </div>
+      <div class="pagination-wrap">
+        <n-pagination
+          :page="page"
+          :page-size="PAGE_SIZE"
+          :item-count="total"
+          @update:page="handlePageChange"
+        />
+      </div>
     </n-card>
   </section>
 </template>
+
+<style scoped lang="scss">
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+</style>

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../../db/index.js';
-import { rebuildRoutes } from '../../services/routeRefreshService.js';
+import { rebuildRoutes, rebuildRoutesIfNeeded } from '../../services/routeRefreshService.js';
 import {
   getRouteDecisionSnapshot,
   listRouteDecisionSnapshots,
@@ -104,6 +104,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get('/api/routes', async () => {
+    await rebuildRoutesIfNeeded();
     const rows = await db
       .select({
         id: schema.tokenRoutes.id,
