@@ -112,7 +112,6 @@ export async function listProxyLogs(query: {
   requestId?: number;
   status?: string;
   model?: string;
-  siteId?: number;
   accountId?: number;
   downstreamApiKeyId?: number;
   isStream?: boolean;
@@ -128,7 +127,6 @@ export async function listProxyLogs(query: {
     const keyword = `%${query.model}%`;
     filters.push(sql`(${schema.proxyLogs.modelRequested} LIKE ${keyword} OR ${schema.proxyLogs.modelActual} LIKE ${keyword})`);
   }
-  if (query.siteId) filters.push(eq(schema.accounts.siteId, query.siteId));
   if (query.accountId) filters.push(eq(schema.proxyLogs.accountId, query.accountId));
   if (query.downstreamApiKeyId) filters.push(eq(schema.proxyLogs.downstreamApiKeyId, query.downstreamApiKeyId));
   if (typeof query.isStream === 'boolean') filters.push(eq(schema.proxyLogs.isStream, query.isStream));
@@ -162,15 +160,14 @@ export async function listProxyLogs(query: {
       retryCount: schema.proxyLogs.retryCount,
       createdAt: schema.proxyLogs.createdAt,
       downstreamPath: schema.proxyDebugTraces.downstreamPath,
-      siteId: schema.accounts.siteId,
-      siteName: schema.sites.name,
       accountName: schema.accounts.username,
+      upstreamUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
       downstreamKeyName: schema.downstreamApiKeys.name
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.proxyDebugTraces, eq(schema.proxyDebugTraces.id, schema.proxyLogs.debugTraceId))
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .leftJoin(schema.downstreamApiKeys, eq(schema.downstreamApiKeys.id, schema.proxyLogs.downstreamApiKeyId))
     .where(where)
     .orderBy(desc(schema.proxyLogs.id))
@@ -215,15 +212,14 @@ export async function getProxyLog(id: number) {
       retryCount: schema.proxyLogs.retryCount,
       createdAt: schema.proxyLogs.createdAt,
       downstreamPath: schema.proxyDebugTraces.downstreamPath,
-      siteId: schema.accounts.siteId,
-      siteName: schema.sites.name,
       accountName: schema.accounts.username,
+      upstreamUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
       downstreamKeyName: schema.downstreamApiKeys.name
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.proxyDebugTraces, eq(schema.proxyDebugTraces.id, schema.proxyLogs.debugTraceId))
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .leftJoin(schema.downstreamApiKeys, eq(schema.downstreamApiKeys.id, schema.proxyLogs.downstreamApiKeyId))
     .where(eq(schema.proxyLogs.id, id))
     .get();

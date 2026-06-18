@@ -1,6 +1,6 @@
 import { OpenAiCompatibleAdapter } from './openaiCompatible.js';
 import { AnyRouterAdapter, ClaudeAdapter, CliProxyApiAdapter, DoneHubAdapter, OneHubAdapter, VeloeraAdapter } from './platformAdapters.js';
-import type { PlatformAdapter, SitePlatform } from './types.js';
+import type { PlatformAdapter, UpstreamPlatform } from './types.js';
 
 const adapters: PlatformAdapter[] = [
   new OpenAiCompatibleAdapter('openai'),
@@ -17,10 +17,10 @@ const adapters: PlatformAdapter[] = [
 
 export function getAdapter(platform: string): PlatformAdapter {
   const adapter = adapters.find((item) => item.platformName === platform);
-  return adapter || new OpenAiCompatibleAdapter(platform as SitePlatform);
+  return adapter || new OpenAiCompatibleAdapter(platform as UpstreamPlatform);
 }
 
-export async function detectPlatform(url: string): Promise<{ platform: SitePlatform | null; confidence: 'high' | 'medium' | 'none'; message: string }> {
+export async function detectPlatform(url: string): Promise<{ platform: UpstreamPlatform | null; confidence: 'high' | 'medium' | 'none'; message: string }> {
   for (const adapter of adapters) {
     if (await adapter.detect(url)) {
       return {
@@ -38,4 +38,4 @@ export async function detectPlatform(url: string): Promise<{ platform: SitePlatf
   };
 }
 
-export type { SitePlatform } from './types.js';
+export type { UpstreamPlatform } from './types.js';

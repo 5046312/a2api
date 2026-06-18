@@ -1,19 +1,12 @@
 import { eq } from 'drizzle-orm';
-import { getAdapter, type SitePlatform } from '../adapters/index.js';
+import { getAdapter, type UpstreamPlatform } from '../adapters/index.js';
 import type { BalanceInfo } from '../adapters/types.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
-type AccountBalanceRow = typeof schema.accounts.$inferSelect & {
-  siteName: string;
-  siteUrl: string;
-  sitePlatform: string;
-  siteStatus: string;
-  siteProxyUrl: string | null;
-  siteCustomHeaders: string | null;
-};
+type AccountBalanceRow = typeof schema.accounts.$inferSelect;
 
 export type BalanceRefreshResult = {
   accountId: number;
@@ -40,7 +33,7 @@ export async function refreshAccountBalance(accountId: number): Promise<BalanceR
   const skipped = skippedAccountBalanceResult(account);
   if (skipped) return skipped;
 
-  const adapter = getAdapter(account.sitePlatform);
+  const adapter = getAdapter(account.platform);
   if (!adapter.getBalance) {
     return skippedAccountBalanceResult(account, 'balance_unsupported');
   }
@@ -48,13 +41,13 @@ export async function refreshAccountBalance(accountId: number): Promise<BalanceR
   try {
     const credential = await resolveDefaultAccountCredential(account.id, { apiToken: account.apiToken });
     const balance = await adapter.getBalance({
-      siteId: account.siteId,
-      baseUrl: account.siteUrl,
-      platform: account.sitePlatform as SitePlatform,
+      accountId: account.id,
+      baseUrl: account.baseUrl,
+      platform: account.platform as UpstreamPlatform,
       accessToken: account.accessToken,
       apiToken: credential?.token ?? null,
-      proxyUrl: accountProxyUrl(account.extraConfig) || account.siteProxyUrl,
-      customHeaders: parseJsonObject(account.siteCustomHeaders) as Record<string, string> | null
+      proxyUrl: account.proxyUrl,
+      customHeaders: parseJsonObject(account.customHeaders) as Record<string, string> | null
     });
     if (!balance) return skippedAccountBalanceResult(account, 'balance_unsupported');
     return await saveBalanceResult(account, balance);
@@ -93,37 +86,8 @@ export async function refreshAllAccountBalances(): Promise<BalanceRefreshAllResu
 
 async function getAccountBalanceRow(accountId: number): Promise<AccountBalanceRow | null> {
   const row = await db
-    .select({
-      id: schema.accounts.id,
-      siteId: schema.accounts.siteId,
-      username: schema.accounts.username,
-      credentialMode: schema.accounts.credentialMode,
-      accessToken: schema.accounts.accessToken,
-      apiToken: schema.accounts.apiToken,
-      balance: schema.accounts.balance,
-      balanceUsed: schema.accounts.balanceUsed,
-      quota: schema.accounts.quota,
-      unitCost: schema.accounts.unitCost,
-      valueScore: schema.accounts.valueScore,
-      status: schema.accounts.status,
-      isPinned: schema.accounts.isPinned,
-      sortOrder: schema.accounts.sortOrder,
-      lastBalanceRefresh: schema.accounts.lastBalanceRefresh,
-      oauthProvider: schema.accounts.oauthProvider,
-      oauthAccountKey: schema.accounts.oauthAccountKey,
-      oauthProjectId: schema.accounts.oauthProjectId,
-      extraConfig: schema.accounts.extraConfig,
-      createdAt: schema.accounts.createdAt,
-      updatedAt: schema.accounts.updatedAt,
-      siteName: schema.sites.name,
-      siteUrl: schema.sites.url,
-      sitePlatform: schema.sites.platform,
-      siteStatus: schema.sites.status,
-      siteProxyUrl: schema.sites.proxyUrl,
-      siteCustomHeaders: schema.sites.customHeaders
-    })
+    .select()
     .from(schema.accounts)
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(eq(schema.accounts.id, accountId))
     .get();
   return row ?? null;
@@ -132,7 +96,7 @@ async function getAccountBalanceRow(accountId: number): Promise<AccountBalanceRo
 function skippedAccountBalanceResult(account: AccountBalanceRow): BalanceRefreshResult | null;
 function skippedAccountBalanceResult(account: AccountBalanceRow, reason: string): BalanceRefreshResult;
 function skippedAccountBalanceResult(account: AccountBalanceRow, reason?: string): BalanceRefreshResult | null {
-  if (!reason && account.siteStatus === 'active' && account.status !== 'disabled') return null;
+  if (!reason && account.status !== 'disabled') return null;
   return {
     accountId: account.id,
     balance: account.balance,
@@ -140,7 +104,7 @@ function skippedAccountBalanceResult(account: AccountBalanceRow, reason?: string
     quota: account.quota,
     refreshedAt: account.lastBalanceRefresh,
     skipped: true,
-    reason: reason || (account.siteStatus !== 'active' ? 'site_disabled' : 'account_disabled')
+    reason: reason || 'account_disabled'
   };
 }
 
@@ -174,16 +138,10 @@ async function recordBalanceRefreshFailure(account: AccountBalanceRow, error: un
   await db.insert(schema.events).values({
     type: 'balance',
     title: '余额刷新失败',
-    message: `${account.siteName} / ${account.username || account.id}: ${message}`,
+    message: `${account.baseUrl} / ${account.username || account.id}: ${message}`,
     level: 'warning',
     relatedId: account.id,
     relatedType: 'account',
     createdAt: nowIso()
   }).run();
-}
-
-function accountProxyUrl(extraConfig: string | null): string | null {
-  const parsed = parseJsonObject(extraConfig);
-  const value = parsed?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

@@ -5,12 +5,10 @@ import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
-type SiteRow = typeof schema.sites.$inferSelect;
-
 export type ProxyVideoTaskRecord = {
   publicId: string;
   upstreamVideoId: string;
-  siteUrl: string;
+  upstreamUrl: string;
   tokenRef: string;
   requestedModel: string | null;
   actualModel: string | null;
@@ -24,7 +22,7 @@ export type ProxyVideoTaskRecord = {
 
 export type SaveProxyVideoTaskInput = {
   upstreamVideoId: string;
-  siteUrl: string;
+  upstreamUrl: string;
   tokenRef: string;
   requestedModel: string;
   actualModel: string;
@@ -38,7 +36,8 @@ export type SaveProxyVideoTaskInput = {
 
 export type ProxyVideoTaskCredential = {
   token: string;
-  site: SiteRow;
+  upstreamUrl: string;
+  accountName: string | null;
   proxyUrl: string | null;
   customHeaders: Record<string, string> | null;
 };
@@ -55,7 +54,7 @@ export async function saveProxyVideoTask(input: SaveProxyVideoTaskInput): Promis
     .values({
       publicId,
       upstreamVideoId: input.upstreamVideoId,
-      siteUrl: input.siteUrl,
+      upstreamUrl: input.upstreamUrl,
       tokenRef: input.tokenRef,
       requestedModel: input.requestedModel,
       actualModel: input.actualModel,
@@ -78,7 +77,7 @@ export async function getProxyVideoTaskByPublicId(publicId: string): Promise<Pro
   return {
     publicId: row.publicId,
     upstreamVideoId: row.upstreamVideoId,
-    siteUrl: row.siteUrl,
+    upstreamUrl: row.upstreamUrl,
     tokenRef: row.tokenRef,
     requestedModel: row.requestedModel,
     actualModel: row.actualModel,
@@ -131,23 +130,25 @@ async function resolveAccountTokenCredential(tokenId: number): Promise<ProxyVide
       token: schema.accountTokens.token,
       tokenEnabled: schema.accountTokens.enabled,
       tokenStatus: schema.accountTokens.valueStatus,
-      accountExtraConfig: schema.accounts.extraConfig,
       accountStatus: schema.accounts.status,
-      site: schema.sites
+      accountName: schema.accounts.username,
+      upstreamUrl: schema.accounts.baseUrl,
+      proxyUrl: schema.accounts.proxyUrl,
+      customHeaders: schema.accounts.customHeaders
     })
     .from(schema.accountTokens)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.accountTokens.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(eq(schema.accountTokens.id, tokenId))
     .get();
-  if (!row || !row.tokenEnabled || row.tokenStatus !== 'ready' || row.accountStatus !== 'active' || row.site.status !== 'active') {
+  if (!row || !row.tokenEnabled || row.tokenStatus !== 'ready' || row.accountStatus !== 'active') {
     return null;
   }
   return {
     token: row.token,
-    site: row.site,
-    proxyUrl: accountProxyUrl(row.accountExtraConfig) || row.site.proxyUrl,
-    customHeaders: parseJsonObject(row.site.customHeaders) as Record<string, string> | null
+    upstreamUrl: row.upstreamUrl,
+    accountName: row.accountName,
+    proxyUrl: row.proxyUrl,
+    customHeaders: parseJsonObject(row.customHeaders) as Record<string, string> | null
   };
 }
 
@@ -156,12 +157,13 @@ async function resolveAccountCredential(accountId: number): Promise<ProxyVideoTa
     .select({
       accountApiToken: schema.accounts.apiToken,
       accountAccessToken: schema.accounts.accessToken,
-      accountExtraConfig: schema.accounts.extraConfig,
       accountStatus: schema.accounts.status,
-      site: schema.sites
+      accountName: schema.accounts.username,
+      upstreamUrl: schema.accounts.baseUrl,
+      proxyUrl: schema.accounts.proxyUrl,
+      customHeaders: schema.accounts.customHeaders
     })
     .from(schema.accounts)
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(eq(schema.accounts.id, accountId))
     .get();
   const credential = row
@@ -172,12 +174,13 @@ async function resolveAccountCredential(accountId: number): Promise<ProxyVideoTa
     })
     : null;
   const token = credential?.token || '';
-  if (!row || !token || row.accountStatus !== 'active' || row.site.status !== 'active') return null;
+  if (!row || !token || row.accountStatus !== 'active') return null;
   return {
     token,
-    site: row.site,
-    proxyUrl: accountProxyUrl(row.accountExtraConfig) || row.site.proxyUrl,
-    customHeaders: parseJsonObject(row.site.customHeaders) as Record<string, string> | null
+    upstreamUrl: row.upstreamUrl,
+    accountName: row.accountName,
+    proxyUrl: row.proxyUrl,
+    customHeaders: parseJsonObject(row.customHeaders) as Record<string, string> | null
   };
 }
 
@@ -198,10 +201,4 @@ function parseJsonColumn(value: unknown): unknown | null {
   } catch {
     return value;
   }
-}
-
-function accountProxyUrl(extraConfig: string | null): string | null {
-  const parsed = parseJsonObject(extraConfig);
-  const value = parsed?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

@@ -6,17 +6,18 @@ export type StatsOverview = {
   todaySuccessRate: number;
   todayTokens: number;
   todayCost: number;
-  activeSiteCount: number;
+  activeAccountCount: number;
   abnormalAccountCount: number;
 };
 
 export type StatsRange = '24h' | '7d' | '30d';
 export type StatsBucket = 'hour' | 'day';
 
-export type SiteUsageItem = {
+export type UpstreamUsageItem = {
   bucket: string;
-  siteId: number | null;
-  siteName: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  upstreamUrl: string | null;
   requests: number;
   successRequests: number;
   successRate: number;
@@ -37,7 +38,6 @@ export type ModelUsageItem = {
 
 export type StatsMarketplaceItem = {
   model: string;
-  siteCount: number;
   accountCount: number;
   minCost: number;
   avgLatencyMs: number;
@@ -45,7 +45,6 @@ export type StatsMarketplaceItem = {
 };
 
 type MarketplaceAggregate = {
-  siteIds: Set<number>;
   accountIds: Set<number>;
   costs: number[];
   latencies: number[];
@@ -82,7 +81,7 @@ function successRate(success: number, total: number): number {
 
 export async function getStatsOverview(): Promise<StatsOverview> {
   const { startIso, endIso } = localTodayRangeIso();
-  const [todayRow, activeSiteRow, abnormalAccountRow] = await Promise.all([
+  const [todayRow, activeAccountRow, abnormalAccountRow] = await Promise.all([
     db
       .select({
         total: sql<number>`count(*)`,
@@ -93,7 +92,7 @@ export async function getStatsOverview(): Promise<StatsOverview> {
       .from(schema.proxyLogs)
       .where(and(gte(schema.proxyLogs.createdAt, startIso), lt(schema.proxyLogs.createdAt, endIso)))
       .get(),
-    db.select({ count: sql<number>`count(*)` }).from(schema.sites).where(eq(schema.sites.status, 'active')).get(),
+    db.select({ count: sql<number>`count(*)` }).from(schema.accounts).where(eq(schema.accounts.status, 'active')).get(),
     db.select({ count: sql<number>`count(*)` }).from(schema.accounts).where(ne(schema.accounts.status, 'active')).get()
   ]);
 
@@ -105,21 +104,22 @@ export async function getStatsOverview(): Promise<StatsOverview> {
     todaySuccessRate: todayRequests > 0 ? todaySuccess / todayRequests : 0,
     todayTokens: Number(todayRow?.tokens || 0),
     todayCost: Number(todayRow?.cost || 0),
-    activeSiteCount: Number(activeSiteRow?.count || 0),
+    activeAccountCount: Number(activeAccountRow?.count || 0),
     abnormalAccountCount: Number(abnormalAccountRow?.count || 0)
   };
 }
 
-export async function getSiteUsageStats(query: { range: StatsRange; bucket: StatsBucket; siteId?: number | undefined }): Promise<SiteUsageItem[]> {
+export async function getUpstreamUsageStats(query: { range: StatsRange; bucket: StatsBucket; accountId?: number | undefined }): Promise<UpstreamUsageItem[]> {
   const bucket = bucketSql(query.bucket);
   const filters: SQL[] = [gte(schema.proxyLogs.createdAt, rangeStartIso(query.range))];
-  if (query.siteId) filters.push(eq(schema.sites.id, query.siteId));
+  if (query.accountId) filters.push(eq(schema.accounts.id, query.accountId));
 
   const rows = await db
     .select({
       bucket,
-      siteId: schema.sites.id,
-      siteName: schema.sites.name,
+      accountId: schema.accounts.id,
+      accountName: schema.accounts.username,
+      upstreamUrl: schema.accounts.baseUrl,
       requests: sql<number>`count(*)`,
       successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
       totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
@@ -128,10 +128,9 @@ export async function getSiteUsageStats(query: { range: StatsRange; bucket: Stat
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(and(...filters))
-    .groupBy(bucket, schema.sites.id, schema.sites.name)
-    .orderBy(bucket, schema.sites.id)
+    .groupBy(bucket, schema.accounts.id, schema.accounts.username, schema.accounts.baseUrl)
+    .orderBy(bucket, schema.accounts.id)
     .all();
 
   return rows.map((row) => {
@@ -139,8 +138,9 @@ export async function getSiteUsageStats(query: { range: StatsRange; bucket: Stat
     const successRequests = Number(row.successRequests || 0);
     return {
       bucket: row.bucket,
-      siteId: row.siteId,
-      siteName: row.siteName,
+      accountId: row.accountId,
+      accountName: row.accountName,
+      upstreamUrl: row.upstreamUrl,
       requests,
       successRequests,
       successRate: successRate(successRequests, requests),
@@ -151,11 +151,11 @@ export async function getSiteUsageStats(query: { range: StatsRange; bucket: Stat
   });
 }
 
-export async function getModelUsageStats(query: { range: StatsRange; model?: string | undefined; siteId?: number | undefined }): Promise<ModelUsageItem[]> {
+export async function getModelUsageStats(query: { range: StatsRange; model?: string | undefined; accountId?: number | undefined }): Promise<ModelUsageItem[]> {
   const modelName = sql<string>`coalesce(${schema.proxyLogs.modelActual}, ${schema.proxyLogs.modelRequested}, 'unknown')`;
   const filters: SQL[] = [gte(schema.proxyLogs.createdAt, rangeStartIso(query.range))];
   if (query.model) filters.push(sql`${modelName} = ${query.model}`);
-  if (query.siteId) filters.push(eq(schema.sites.id, query.siteId));
+  if (query.accountId) filters.push(eq(schema.accounts.id, query.accountId));
 
   const rows = await db
     .select({
@@ -168,7 +168,6 @@ export async function getModelUsageStats(query: { range: StatsRange; model?: str
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(and(...filters))
     .groupBy(modelName)
     .orderBy(modelName)
@@ -195,20 +194,17 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
   const accountRows = await db
     .select({
       model: schema.modelAvailability.modelName,
-      siteId: schema.sites.id,
       accountId: schema.accounts.id,
       unitCost: schema.accounts.unitCost,
       latencyMs: schema.modelAvailability.latencyMs
     })
     .from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.modelAvailability.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
-    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active'), eq(schema.sites.status, 'active')))
+    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active')))
     .all();
 
   for (const row of accountRows) {
     const aggregate = ensureMarketplaceAggregate(aggregates, row.model);
-    aggregate.siteIds.add(row.siteId);
     aggregate.accountIds.add(row.accountId);
     pushNumber(aggregate.costs, row.unitCost);
     pushNumber(aggregate.latencies, row.latencyMs);
@@ -242,7 +238,6 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
       const logLatencyAverage = aggregate.logLatencyCount > 0 ? aggregate.logLatencyTotal / aggregate.logLatencyCount : 0;
       return {
         model,
-        siteCount: aggregate.siteIds.size,
         accountCount: aggregate.accountIds.size,
         minCost: aggregate.costs.length > 0 ? Math.min(...aggregate.costs) : 0,
         avgLatencyMs: Math.round(latencyAverage || logLatencyAverage || 0),
@@ -257,7 +252,6 @@ function ensureMarketplaceAggregate(aggregates: Map<string, MarketplaceAggregate
   const current = aggregates.get(key);
   if (current) return current;
   const next: MarketplaceAggregate = {
-    siteIds: new Set(),
     accountIds: new Set(),
     costs: [],
     latencies: [],

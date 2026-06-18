@@ -5,7 +5,6 @@ import { nowIso } from '../shared/time.js';
 
 export type OAuthConnectionInfo = {
   accountId: number;
-  siteId: number;
   provider: string;
   username: string | null;
   email: string | null;
@@ -19,12 +18,8 @@ export type OAuthConnectionInfo = {
   routeChannelCount: number;
   lastModelSyncAt: string | null;
   proxyUrl: string | null;
-  site: {
-    id: number;
-    name: string;
-    url: string;
-    platform: string;
-  } | null;
+  upstreamUrl: string;
+  platform: string;
 };
 
 export type OAuthConnectionsResponse = {
@@ -36,19 +31,17 @@ export type OAuthConnectionsResponse = {
 
 type OAuthAccountRow = {
   id: number;
-  siteId: number;
   username: string | null;
   credentialMode: string;
   accessToken: string | null;
   status: string;
+  baseUrl: string;
+  platform: string;
+  proxyUrl: string | null;
   oauthProvider: string | null;
   oauthAccountKey: string | null;
   oauthProjectId: string | null;
   extraConfig: string | null;
-  siteName: string | null;
-  siteUrl: string | null;
-  sitePlatform: string | null;
-  siteStatus: string | null;
 };
 
 export async function listOAuthConnections(input: { limit?: number; offset?: number } = {}): Promise<OAuthConnectionsResponse> {
@@ -59,22 +52,19 @@ export async function listOAuthConnections(input: { limit?: number; offset?: num
   const rows = await db
     .select({
       id: schema.accounts.id,
-      siteId: schema.accounts.siteId,
       username: schema.accounts.username,
       credentialMode: schema.accounts.credentialMode,
       accessToken: schema.accounts.accessToken,
       status: schema.accounts.status,
+      baseUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
+      proxyUrl: schema.accounts.proxyUrl,
       oauthProvider: schema.accounts.oauthProvider,
       oauthAccountKey: schema.accounts.oauthAccountKey,
       oauthProjectId: schema.accounts.oauthProjectId,
-      extraConfig: schema.accounts.extraConfig,
-      siteName: schema.sites.name,
-      siteUrl: schema.sites.url,
-      sitePlatform: schema.sites.platform,
-      siteStatus: schema.sites.status
+      extraConfig: schema.accounts.extraConfig
     })
     .from(schema.accounts)
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(where)
     .orderBy(desc(schema.accounts.id))
     .limit(limit)
@@ -127,22 +117,19 @@ async function getOAuthConnection(accountId: number): Promise<OAuthConnectionInf
   const row = await db
     .select({
       id: schema.accounts.id,
-      siteId: schema.accounts.siteId,
       username: schema.accounts.username,
       credentialMode: schema.accounts.credentialMode,
       accessToken: schema.accounts.accessToken,
       status: schema.accounts.status,
+      baseUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
+      proxyUrl: schema.accounts.proxyUrl,
       oauthProvider: schema.accounts.oauthProvider,
       oauthAccountKey: schema.accounts.oauthAccountKey,
       oauthProjectId: schema.accounts.oauthProjectId,
-      extraConfig: schema.accounts.extraConfig,
-      siteName: schema.sites.name,
-      siteUrl: schema.sites.url,
-      sitePlatform: schema.sites.platform,
-      siteStatus: schema.sites.status
+      extraConfig: schema.accounts.extraConfig
     })
     .from(schema.accounts)
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(and(eq(schema.accounts.id, accountId), oauthAccountWhere()))
     .get();
   if (!row) return null;
@@ -192,11 +179,10 @@ function toOAuthConnection(
   const extraConfig = parseJsonObject(row.extraConfig);
   const modelSnapshot = modelSnapshotMap.get(row.id) || { models: [], lastCheckedAt: null };
   const models = modelSnapshot.models;
-  const provider = row.oauthProvider || inferProviderFromSite(row.sitePlatform) || 'oauth';
-  const status = row.status === 'active' && row.siteStatus === 'active' && row.accessToken ? 'healthy' : 'abnormal';
+  const provider = row.oauthProvider || inferProviderFromPlatform(row.platform) || 'oauth';
+  const status = row.status === 'active' && row.accessToken ? 'healthy' : 'abnormal';
   return {
     accountId: row.id,
-    siteId: row.siteId,
     provider,
     username: row.username,
     email: readString(extraConfig?.email) || row.username,
@@ -209,19 +195,13 @@ function toOAuthConnection(
     status,
     routeChannelCount: routeChannelCountMap.get(row.id) || 0,
     lastModelSyncAt: modelSnapshot.lastCheckedAt,
-    proxyUrl: readString(extraConfig?.proxyUrl),
-    site: row.siteName && row.siteUrl && row.sitePlatform
-      ? {
-          id: row.siteId,
-          name: row.siteName,
-          url: row.siteUrl,
-          platform: row.sitePlatform
-        }
-      : null
+    proxyUrl: row.proxyUrl || readString(extraConfig?.proxyUrl),
+    upstreamUrl: row.baseUrl,
+    platform: row.platform
   };
 }
 
-function inferProviderFromSite(platform: string | null): string | null {
+function inferProviderFromPlatform(platform: string | null): string | null {
   if (platform === 'codex' || platform === 'claude' || platform === 'gemini-cli' || platform === 'antigravity') return platform;
   return null;
 }

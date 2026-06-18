@@ -119,7 +119,7 @@ function credentialRefs(accountIds: number[]): CredentialRef[] {
   const refs: CredentialRef[] = [];
   for (const accountId of accountIds) {
     const account = accountById(accountId);
-    if (account) refs.push({ kind: 'account', siteId: account.siteId, accountId: account.id });
+    if (account) refs.push({ kind: 'account', accountId: account.id });
   }
   return refs;
 }
@@ -203,10 +203,7 @@ function buildPayload() {
     modelScope: form.modelScope,
     supportedModels: [],
     allowedRouteIds: form.modelScope === 'selected' ? form.allowedRouteIds : [],
-    allowedSiteIds: [],
     allowedCredentialRefs: form.accountScope === 'selected' ? credentialRefs(form.allowedAccountIds) : [],
-    siteWeightMultipliers: {},
-    excludedSiteIds: [],
     excludedCredentialRefs: form.accountScope === 'selected' ? credentialRefs(form.excludedAccountIds) : []
   };
 }

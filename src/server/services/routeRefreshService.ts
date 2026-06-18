@@ -1,7 +1,6 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
-import { isModelDisabled } from '../shared/modelMatch.js';
 import { nowIso } from '../shared/time.js';
 import { clearTokenRouterCache } from './tokenRouter.js';
 
@@ -25,18 +24,12 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
     .select({
       modelName: schema.modelAvailability.modelName,
       accountId: schema.modelAvailability.accountId,
-      siteId: schema.sites.id,
-      accountStatus: schema.accounts.status,
-      siteStatus: schema.sites.status
+      accountStatus: schema.accounts.status
     })
     .from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.modelAvailability.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
-    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active'), eq(schema.sites.status, 'active')))
+    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active')))
     .all();
-  const disabledBySiteId = await loadDisabledModelsBySiteId();
-  // 禁用模型不生成自动通道；手工通道也会在 tokenRouter 运行时二次拦截。
-  const usableAvailabilityRows = availabilityRows.filter((row) => !isModelDisabled(row.modelName, disabledBySiteId.get(row.siteId) || []));
 
   const now = nowIso();
   let routesCreated = 0;
@@ -45,7 +38,7 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
   let channelsUpdated = 0;
 
   const routeByModel = new Map<string, number>();
-  for (const row of usableAvailabilityRows) {
+  for (const row of availabilityRows) {
     if (routeByModel.has(row.modelName)) continue;
     const existing = await db
       .select()
@@ -82,7 +75,7 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
   }
 
   const desired: DesiredChannel[] = [];
-  for (const row of usableAvailabilityRows) {
+  for (const row of availabilityRows) {
     const routeId = routeByModel.get(row.modelName);
     if (!routeId) continue;
     desired.push({ routeId, accountId: row.accountId, tokenId: null, sourceModel: row.modelName });
@@ -127,17 +120,6 @@ export async function rebuildRoutes(_options: { preserveManual?: boolean } = {})
 
   clearTokenRouterCache();
   return { routesCreated, routesUpdated, channelsCreated, channelsUpdated, channelsRemoved: staleIds.length };
-}
-
-async function loadDisabledModelsBySiteId(): Promise<Map<number, string[]>> {
-  const rows = await db.select().from(schema.siteDisabledModels).all();
-  const output = new Map<number, string[]>();
-  for (const row of rows) {
-    const current = output.get(row.siteId) || [];
-    current.push(row.modelName);
-    output.set(row.siteId, current);
-  }
-  return output;
 }
 
 async function findAutoChannel(item: DesiredChannel) {

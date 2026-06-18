@@ -18,10 +18,7 @@ export type RecordProxyDebugAttemptInput = {
   channelId?: number | null;
   routeId?: number | null;
   accountId?: number | null;
-  siteId?: number | null;
-  sitePlatform?: string | null;
   modelActual?: string | null;
-  endpointId?: number | null;
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -35,8 +32,6 @@ export type FinalizeProxyDebugTraceInput = {
   selectedChannelId?: number | null;
   selectedRouteId?: number | null;
   selectedAccountId?: number | null;
-  selectedSiteId?: number | null;
-  selectedSitePlatform?: string | null;
   decisionSummary?: unknown;
   finalStatus: 'success' | 'failed';
   finalHttpStatus?: number | null;
@@ -70,10 +65,7 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
       channelId: input.channelId ?? null,
       routeId: input.routeId ?? null,
       accountId: input.accountId ?? null,
-      siteId: input.siteId ?? null,
-      sitePlatform: input.sitePlatform ?? null,
       modelActual: input.modelActual ?? null,
-      endpointId: input.endpointId ?? null,
       endpoint: input.endpoint,
       requestPath: input.requestPath,
       targetUrl: input.targetUrl,
@@ -90,10 +82,7 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
         channelId: input.channelId ?? null,
         routeId: input.routeId ?? null,
         accountId: input.accountId ?? null,
-        siteId: input.siteId ?? null,
-        sitePlatform: input.sitePlatform ?? null,
         modelActual: input.modelActual ?? null,
-        endpointId: input.endpointId ?? null,
         endpoint: input.endpoint,
         requestPath: input.requestPath,
         targetUrl: input.targetUrl,
@@ -112,8 +101,6 @@ export async function finalizeProxyDebugTrace(traceId: number, input: FinalizePr
       selectedChannelId: input.selectedChannelId ?? null,
       selectedRouteId: input.selectedRouteId ?? null,
       selectedAccountId: input.selectedAccountId ?? null,
-      selectedSiteId: input.selectedSiteId ?? null,
-      selectedSitePlatform: input.selectedSitePlatform ?? null,
       decisionSummaryJson: input.decisionSummary === undefined ? null : stringifyJson(input.decisionSummary),
       finalStatus: input.finalStatus,
       finalHttpStatus: input.finalHttpStatus ?? null,
@@ -154,8 +141,6 @@ export async function listProxyDebugTraces(query: {
       selectedChannelId: schema.proxyDebugTraces.selectedChannelId,
       selectedRouteId: schema.proxyDebugTraces.selectedRouteId,
       selectedAccountId: schema.proxyDebugTraces.selectedAccountId,
-      selectedSiteId: schema.proxyDebugTraces.selectedSiteId,
-      selectedSitePlatform: schema.proxyDebugTraces.selectedSitePlatform,
       finalStatus: schema.proxyDebugTraces.finalStatus,
       finalHttpStatus: schema.proxyDebugTraces.finalHttpStatus,
       finalUpstreamPath: schema.proxyDebugTraces.finalUpstreamPath,

@@ -7,61 +7,8 @@ export type ListResponse<T> = {
   pageSize?: number;
 };
 
-export type Site = {
-  id: number;
-  name: string;
-  url: string;
-  platform: string;
-  status: string;
-  globalWeight: number;
-  isPinned: boolean;
-  sortOrder: number;
-  proxyUrl: string | null;
-  useSystemProxy: boolean;
-  customHeaders: Record<string, unknown> | null;
-};
-
-export type SiteEndpoint = {
-  id: number;
-  siteId: number;
-  url: string;
-  enabled: boolean;
-  sortOrder: number;
-  cooldownUntil: string | null;
-  lastSelectedAt: string | null;
-  lastFailedAt: string | null;
-  lastFailureReason: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SiteDisabledModels = {
-  siteId: number;
-  models: string[];
-  routeRebuilt?: boolean;
-};
-
-export type SiteAvailableModels = {
-  siteId: number;
-  models: string[];
-};
-
-export type SiteBatchAction = 'enable' | 'disable' | 'delete' | 'enableSystemProxy' | 'disableSystemProxy';
-
-export type SiteBatchResult = {
-  ok: boolean;
-  action: SiteBatchAction;
-  successIds: number[];
-  failedItems: Array<{ id: number; message: string }>;
-  updated: number;
-  deleted: number;
-  routeRebuilt: boolean;
-};
-
 export type Account = {
   id: number;
-  siteId: number;
-  siteName: string | null;
   name: string | null;
   baseUrl: string | null;
   platform: string | null;
@@ -128,7 +75,6 @@ export type OAuthProvidersResponse = {
 
 export type OAuthConnectionInfo = {
   accountId: number;
-  siteId: number;
   provider: string;
   username: string | null;
   email: string | null;
@@ -142,12 +88,8 @@ export type OAuthConnectionInfo = {
   routeChannelCount: number;
   lastModelSyncAt: string | null;
   proxyUrl: string | null;
-  site: {
-    id: number;
-    name: string;
-    url: string;
-    platform: string;
-  } | null;
+  upstreamUrl: string;
+  platform: string;
 };
 
 export type OAuthConnectionsResponse = {
@@ -224,7 +166,7 @@ export type RouteLiteItem = {
 export type RouteSummaryItem = RouteLiteItem & {
   channelCount: number;
   enabledChannelCount: number;
-  siteNames: string[];
+  accountNames: string[];
 };
 
 export type RouteChannel = {
@@ -240,16 +182,17 @@ export type RouteChannel = {
   cooldownUntil: string | null;
   lastFailAt: string | null;
   lastFailureReason: string | null;
-  siteName: string | null;
+  upstreamUrl: string | null;
+  platform: string | null;
   accountName: string | null;
 };
 
 export type RouteDecisionCandidate = {
   channelId: number;
   accountId: number;
-  siteId: number;
-  siteName: string;
   accountName: string | null;
+  baseUrl: string;
+  platform: string;
   priority: number;
   weight: number;
   score: number;
@@ -269,7 +212,6 @@ export type RouteDecision = {
   routingStrategy: string | null;
   selectedChannelId: number | null;
   selectedAccountId: number | null;
-  selectedSiteId: number | null;
   priority: number | null;
   summary: string[];
   candidates: RouteDecisionCandidate[];
@@ -307,10 +249,7 @@ export type DownstreamKey = {
   modelScope: 'all' | 'selected';
   supportedModels: string[];
   allowedRouteIds: number[];
-  allowedSiteIds: number[];
   allowedCredentialRefs: CredentialRef[];
-  siteWeightMultipliers: Record<string, number>;
-  excludedSiteIds: number[];
   excludedCredentialRefs: CredentialRef[];
   usedRequests: number;
   maxRequests: number | null;
@@ -335,7 +274,9 @@ export type DownstreamKeyBatchResult = {
   reset: number;
 };
 
-export type CredentialRef = { kind: 'account'; siteId: number; accountId: number };
+export type CredentialRef =
+  | { kind: 'account'; accountId: number }
+  | { kind: 'account_token'; accountId: number; tokenId: number };
 
 export type ProxyLog = {
   id: number;
@@ -344,10 +285,10 @@ export type ProxyLog = {
   createdAt: string;
   routeId: number | null;
   channelId: number | null;
-  siteId: number | null;
-  siteName: string | null;
   accountId: number | null;
   accountName: string | null;
+  upstreamUrl: string | null;
+  platform: string | null;
   downstreamApiKeyId: number | null;
   downstreamKeyName: string | null;
   status: string;
@@ -376,10 +317,7 @@ export type ProxyDebugAttempt = {
   channelId: number | null;
   routeId: number | null;
   accountId: number | null;
-  siteId: number | null;
-  sitePlatform: string | null;
   modelActual: string | null;
-  endpointId: number | null;
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -400,8 +338,6 @@ export type ProxyDebugTrace = {
   selectedChannelId: number | null;
   selectedRouteId: number | null;
   selectedAccountId: number | null;
-  selectedSiteId: number | null;
-  selectedSitePlatform: string | null;
   finalStatus: string | null;
   finalHttpStatus: number | null;
   finalUpstreamPath: string | null;
@@ -525,11 +461,8 @@ export type MonitorAccount = {
   accountId: number;
   accountName: string;
   accountStatus: string;
-  siteId: number;
-  siteName: string;
-  siteUrl: string;
-  sitePlatform: string;
-  siteStatus: string;
+  upstreamUrl: string;
+  platform: string;
   enabled: boolean;
   active: boolean;
   intervalSec: number | null;
@@ -609,39 +542,20 @@ export type BackgroundTask = {
   logs: BackgroundTaskLogEntry[];
 };
 
-export type SiteAnnouncement = {
-  id: number;
-  siteId: number;
-  siteName: string | null;
-  platform: string;
-  sourceKey: string;
-  title: string;
-  content: string;
-  level: 'info' | 'warning' | 'error';
-  sourceUrl: string | null;
-  startsAt: string | null;
-  endsAt: string | null;
-  upstreamCreatedAt: string | null;
-  upstreamUpdatedAt: string | null;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  readAt: string | null;
-  dismissedAt: string | null;
-};
-
 export type StatsOverview = {
   todayRequests: number;
   todaySuccessRate: number;
   todayTokens: number;
   todayCost: number;
-  activeSiteCount: number;
+  activeAccountCount: number;
   abnormalAccountCount: number;
 };
 
-export type SiteUsageItem = {
+export type UpstreamUsageItem = {
   bucket: string;
-  siteId: number | null;
-  siteName: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  upstreamUrl: string | null;
   requests: number;
   successRequests: number;
   successRate: number;
@@ -662,7 +576,6 @@ export type ModelUsageItem = {
 
 export type StatsMarketplaceItem = {
   model: string;
-  siteCount: number;
   accountCount: number;
   minCost: number;
   avgLatencyMs: number;
@@ -700,14 +613,12 @@ export type BackupImportResult = {
     created: number;
     updated: number;
     skipped: number;
-    importedSites: number;
     importedAccounts: number;
     importedTokens: number;
     importedRoutes: number;
     importedDownstreamKeys: number;
     importedProxyFiles: number;
     importedProxyVideoTasks: number;
-    importedSiteAnnouncements: number;
     importedPreferences: number;
   };
   warnings: string[];
@@ -849,30 +760,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 export const api = {
   authCheck: () => apiRequest<{ ok: boolean }>('/api/auth/check'),
   getAuthInfo: () => apiRequest<{ masked: string }>('/api/settings/auth/info'),
-  listSites: (query: Record<string, QueryValue> = {}) => apiRequest<ListResponse<Site>>(buildQuery('/api/sites', query)),
-  createSite: (body: unknown) => apiRequest<Site>('/api/sites', { method: 'POST', body }),
-  updateSite: (id: number, body: unknown) => apiRequest<Site>(`/api/sites/${id}`, { method: 'PUT', body }),
-  deleteSite: (id: number) => apiRequest<{ ok: boolean }>(`/api/sites/${id}`, { method: 'DELETE' }),
-  batchUpdateSites: (ids: number[], action: SiteBatchAction) =>
-    apiRequest<SiteBatchResult>('/api/sites/batch', { method: 'POST', body: { ids, action } }),
-  detectSite: (url: string) =>
-    apiRequest<{ platform: string | null; message: string }>('/api/sites/detect', { method: 'POST', body: { url } }),
-  listSiteEndpoints: (siteId: number) =>
-    apiRequest<{ items: SiteEndpoint[]; total: number }>(`/api/sites/${siteId}/endpoints`),
-  createSiteEndpoint: (siteId: number, body: unknown) =>
-    apiRequest<SiteEndpoint>(`/api/sites/${siteId}/endpoints`, { method: 'POST', body }),
-  updateSiteEndpoint: (endpointId: number, body: unknown) =>
-    apiRequest<SiteEndpoint>(`/api/sites/endpoints/${endpointId}`, { method: 'PUT', body }),
-  deleteSiteEndpoint: (endpointId: number) =>
-    apiRequest<{ ok: boolean }>(`/api/sites/endpoints/${endpointId}`, { method: 'DELETE' }),
-  listSiteDisabledModels: (siteId: number) =>
-    apiRequest<SiteDisabledModels>(`/api/sites/${siteId}/disabled-models`),
-  updateSiteDisabledModels: (siteId: number, models: string[]) =>
-    apiRequest<SiteDisabledModels>(`/api/sites/${siteId}/disabled-models`, { method: 'PUT', body: { models } }),
-  listSiteAvailableModels: (siteId: number) =>
-    apiRequest<SiteAvailableModels>(`/api/sites/${siteId}/available-models`),
   listAccounts: (query: Record<string, QueryValue> = {}) =>
     apiRequest<ListResponse<Account>>(buildQuery('/api/accounts', query)),
+  detectAccountPlatform: (baseUrl: string) =>
+    apiRequest<{ platform: string | null; message: string }>('/api/accounts/detect-platform', { method: 'POST', body: { baseUrl } }),
   verifyAccountApiKey: (body: unknown) => apiRequest('/api/accounts/verify-token', { method: 'POST', body }),
   createAccount: (body: unknown) => apiRequest<Account>('/api/accounts', { method: 'POST', body }),
   updateAccount: (id: number, body: unknown) => apiRequest<Account>(`/api/accounts/${id}`, { method: 'PUT', body }),
@@ -1005,18 +896,9 @@ export const api = {
   clearEvents: () => apiRequest<{ ok: boolean; deleted: number }>('/api/events', { method: 'DELETE' }),
   listTasks: (limit = 50) => apiRequest<{ tasks: BackgroundTask[] }>(buildQuery('/api/tasks', { limit })),
   getTask: (id: string) => apiRequest<{ ok: boolean; task: BackgroundTask }>(`/api/tasks/${encodeURIComponent(id)}`),
-  listSiteAnnouncements: (query: Record<string, QueryValue> = {}) =>
-    apiRequest<ListResponse<SiteAnnouncement>>(buildQuery('/api/site-announcements', query)),
-  markSiteAnnouncementRead: (id: number) =>
-    apiRequest<{ ok: boolean }>(`/api/site-announcements/${id}/read`, { method: 'POST' }),
-  markAllSiteAnnouncementsRead: () =>
-    apiRequest<{ ok: boolean; updated: number }>('/api/site-announcements/read-all', { method: 'POST' }),
-  dismissSiteAnnouncement: (id: number) =>
-    apiRequest<{ ok: boolean }>(`/api/site-announcements/${id}/dismiss`, { method: 'POST' }),
-  clearSiteAnnouncements: () => apiRequest<{ ok: boolean; deleted: number }>('/api/site-announcements', { method: 'DELETE' }),
   getStatsOverview: () => apiRequest<StatsOverview>('/api/stats/overview'),
-  getSiteUsageStats: (query: Record<string, QueryValue> = {}) =>
-    apiRequest<{ items: SiteUsageItem[] }>(buildQuery('/api/stats/site-usage', query)),
+  getUpstreamUsageStats: (query: Record<string, QueryValue> = {}) =>
+    apiRequest<{ items: UpstreamUsageItem[] }>(buildQuery('/api/stats/upstream-usage', query)),
   getModelUsageStats: (query: Record<string, QueryValue> = {}) =>
     apiRequest<{ items: ModelUsageItem[] }>(buildQuery('/api/stats/model-usage', query)),
   getStatsMarketplace: () => apiRequest<{ items: StatsMarketplaceItem[] }>('/api/stats/marketplace'),

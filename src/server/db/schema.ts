@@ -1,71 +1,15 @@
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-export const sites = sqliteTable(
-  'sites',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    name: text('name').notNull(),
-    url: text('url').notNull(),
-    platform: text('platform').notNull(),
-    proxyUrl: text('proxy_url'),
-    useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).notNull().default(false),
-    customHeaders: text('custom_headers'),
-    status: text('status').notNull().default('active'),
-    isPinned: integer('is_pinned', { mode: 'boolean' }).notNull().default(false),
-    sortOrder: integer('sort_order').notNull().default(0),
-    globalWeight: real('global_weight').notNull().default(1),
-    apiKey: text('api_key'),
-    createdAt: text('created_at').notNull(),
-    updatedAt: text('updated_at').notNull()
-  },
-  (table) => ({
-    platformUrlUnique: uniqueIndex('sites_platform_url_unique').on(table.platform, table.url),
-    statusIndex: index('sites_status_idx').on(table.status)
-  })
-);
-
-export const siteApiEndpoints = sqliteTable(
-  'site_api_endpoints',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
-    url: text('url').notNull(),
-    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-    sortOrder: integer('sort_order').notNull().default(0),
-    cooldownUntil: text('cooldown_until'),
-    lastSelectedAt: text('last_selected_at'),
-    lastFailedAt: text('last_failed_at'),
-    lastFailureReason: text('last_failure_reason'),
-    createdAt: text('created_at').notNull(),
-    updatedAt: text('updated_at').notNull()
-  },
-  (table) => ({
-    siteUrlUnique: uniqueIndex('site_api_endpoints_site_url_unique').on(table.siteId, table.url),
-    siteEnabledIndex: index('site_api_endpoints_enabled_idx').on(table.siteId, table.enabled, table.sortOrder),
-    siteCooldownIndex: index('site_api_endpoints_cooldown_idx').on(table.siteId, table.cooldownUntil)
-  })
-);
-
-export const siteDisabledModels = sqliteTable(
-  'site_disabled_models',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
-    modelName: text('model_name').notNull(),
-    createdAt: text('created_at').notNull()
-  },
-  (table) => ({
-    siteModelUnique: uniqueIndex('site_disabled_models_unique').on(table.siteId, table.modelName),
-    siteIndex: index('site_disabled_models_site_idx').on(table.siteId)
-  })
-);
-
 export const accounts = sqliteTable(
   'accounts',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
     username: text('username'),
+    baseUrl: text('base_url').notNull().default(''),
+    platform: text('platform').notNull().default('openai'),
+    proxyUrl: text('proxy_url'),
+    useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).notNull().default(false),
+    customHeaders: text('custom_headers'),
     credentialMode: text('credential_mode').notNull().default('apikey'),
     accessToken: text('access_token'),
     apiToken: text('api_token'),
@@ -86,9 +30,9 @@ export const accounts = sqliteTable(
     updatedAt: text('updated_at').notNull()
   },
   (table) => ({
-    siteIndex: index('accounts_site_idx').on(table.siteId),
+    platformIndex: index('accounts_platform_idx').on(table.platform),
     statusIndex: index('accounts_status_idx').on(table.status),
-    siteStatusIndex: index('accounts_site_status_idx').on(table.siteId, table.status)
+    platformStatusIndex: index('accounts_platform_status_idx').on(table.platform, table.status)
   })
 );
 
@@ -248,10 +192,7 @@ export const downstreamApiKeys = sqliteTable(
     modelScope: text('model_scope').notNull().default('selected'),
     supportedModels: text('supported_models').notNull().default('[]'),
     allowedRouteIds: text('allowed_route_ids').notNull().default('[]'),
-    allowedSiteIds: text('allowed_site_ids').notNull().default('[]'),
     allowedCredentialRefs: text('allowed_credential_refs').notNull().default('[]'),
-    siteWeightMultipliers: text('site_weight_multipliers').notNull().default('{}'),
-    excludedSiteIds: text('excluded_site_ids').notNull().default('[]'),
     excludedCredentialRefs: text('excluded_credential_refs').notNull().default('[]'),
     lastUsedAt: text('last_used_at'),
     createdAt: text('created_at').notNull(),
@@ -312,8 +253,6 @@ export const proxyDebugTraces = sqliteTable(
     selectedChannelId: integer('selected_channel_id'),
     selectedRouteId: integer('selected_route_id'),
     selectedAccountId: integer('selected_account_id'),
-    selectedSiteId: integer('selected_site_id'),
-    selectedSitePlatform: text('selected_site_platform'),
     decisionSummaryJson: text('decision_summary_json'),
     finalStatus: text('final_status'),
     finalHttpStatus: integer('final_http_status'),
@@ -339,10 +278,7 @@ export const proxyDebugAttempts = sqliteTable(
     channelId: integer('channel_id'),
     routeId: integer('route_id'),
     accountId: integer('account_id'),
-    siteId: integer('site_id'),
-    sitePlatform: text('site_platform'),
     modelActual: text('model_actual'),
-    endpointId: integer('endpoint_id'),
     endpoint: text('endpoint').notNull(),
     requestPath: text('request_path').notNull(),
     targetUrl: text('target_url').notNull(),
@@ -391,7 +327,7 @@ export const proxyVideoTasks = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     publicId: text('public_id').notNull(),
     upstreamVideoId: text('upstream_video_id').notNull(),
-    siteUrl: text('site_url').notNull(),
+    upstreamUrl: text('upstream_url').notNull(),
     tokenRef: text('token_ref').notNull(),
     requestedModel: text('requested_model'),
     actualModel: text('actual_model'),
@@ -460,34 +396,6 @@ export const monitorHeartbeats = sqliteTable(
   })
 );
 
-export const siteAnnouncements = sqliteTable(
-  'site_announcements',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
-    platform: text('platform').notNull(),
-    sourceKey: text('source_key').notNull(),
-    title: text('title').notNull(),
-    content: text('content').notNull(),
-    level: text('level').notNull().default('info'),
-    sourceUrl: text('source_url'),
-    startsAt: text('starts_at'),
-    endsAt: text('ends_at'),
-    upstreamCreatedAt: text('upstream_created_at'),
-    upstreamUpdatedAt: text('upstream_updated_at'),
-    firstSeenAt: text('first_seen_at').notNull(),
-    lastSeenAt: text('last_seen_at').notNull(),
-    readAt: text('read_at'),
-    dismissedAt: text('dismissed_at'),
-    rawPayload: text('raw_payload')
-  },
-  (table) => ({
-    siteSourceKeyUnique: uniqueIndex('site_announcements_site_source_key_unique').on(table.siteId, table.sourceKey),
-    siteFirstSeenIndex: index('site_announcements_site_first_seen_idx').on(table.siteId, table.firstSeenAt),
-    readIndex: index('site_announcements_read_idx').on(table.readAt)
-  })
-);
-
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value')
@@ -513,9 +421,6 @@ export const events = sqliteTable(
 );
 
 export const schema = {
-  sites,
-  siteApiEndpoints,
-  siteDisabledModels,
   accounts,
   accountTokens,
   modelAvailability,
@@ -532,7 +437,6 @@ export const schema = {
   proxyVideoTasks,
   accountMonitors,
   monitorHeartbeats,
-  siteAnnouncements,
   settings,
   events
 };

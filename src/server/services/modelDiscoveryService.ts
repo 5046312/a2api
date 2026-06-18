@@ -1,8 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { getAdapter, type SitePlatform } from '../adapters/index.js';
+import { getAdapter, type UpstreamPlatform } from '../adapters/index.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
-import { isModelDisabled } from '../shared/modelMatch.js';
 import { nowIso } from '../shared/time.js';
 import { resolveDefaultAccountCredential } from './accountTokenService.js';
 import { rebuildRoutes } from './routeRefreshService.js';
@@ -23,7 +22,6 @@ export type AccountModelsResult = {
 type DiscoveredAccountModel = {
   name: string;
   contextLength: number | null;
-  disabled: boolean;
 };
 
 export type AccountModelsUpdateResult = AccountModelsResult & {
@@ -46,7 +44,7 @@ export async function listAccountModels(accountId: number): Promise<AccountModel
 export async function previewAccountModels(accountId: number): Promise<AccountModelsResult> {
   // 预览只返回可选择模型，不落库，确认保存由账号模型接口完成。
   const models = normalizeModelNames(
-    (await discoverAccountModels(accountId)).filter((model) => !model.disabled).map((model) => model.name)
+    (await discoverAccountModels(accountId)).map((model) => model.name)
   );
   return { accountId, models };
 }
@@ -115,18 +113,6 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
       .from(schema.modelAvailability)
       .where(and(eq(schema.modelAvailability.accountId, accountId), eq(schema.modelAvailability.modelName, model.name)))
       .get();
-    // 站点禁用模型在发现阶段即标记不可用，避免后续模型选择误用旧数据。
-    if (model.disabled) {
-      if (existing && existing.available) {
-        await db
-          .update(schema.modelAvailability)
-          .set({ available: false, checkedAt: now })
-          .where(eq(schema.modelAvailability.id, existing.id))
-          .run();
-        removed += 1;
-      }
-      continue;
-    }
     if (existing) {
       await db
         .update(schema.modelAvailability)
@@ -164,8 +150,6 @@ export async function refreshAccountModels(accountId: number, options: { rebuild
 async function discoverAccountModels(accountId: number): Promise<DiscoveredAccountModel[]> {
   const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get();
   if (!account) throw new Error('Account not found');
-  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, account.siteId)).get();
-  if (!site) throw new Error('Site not found');
 
   const credential = await resolveDefaultAccountCredential(account.id, {
     apiToken: account.apiToken,
@@ -175,28 +159,20 @@ async function discoverAccountModels(accountId: number): Promise<DiscoveredAccou
   const token = credential?.token || '';
   if (!token) throw new Error('Account has no usable token');
 
-  const adapter = getAdapter(site.platform);
+  const adapter = getAdapter(account.platform);
   const models = await adapter.getModels({
-    siteId: site.id,
-    baseUrl: site.url,
-    platform: site.platform as SitePlatform,
-    proxyUrl: accountProxyUrl(account.extraConfig) || site.proxyUrl,
-    customHeaders: parseJsonObject(site.customHeaders) as Record<string, string> | null,
+    accountId: account.id,
+    baseUrl: account.baseUrl,
+    platform: account.platform as UpstreamPlatform,
+    proxyUrl: account.proxyUrl,
+    customHeaders: parseJsonObject(account.customHeaders) as Record<string, string> | null,
     token,
     credentialMode: account.credentialMode === 'oauth' ? 'oauth' : 'apikey'
   });
-  const disabledModels = await db
-    .select({ modelName: schema.siteDisabledModels.modelName })
-    .from(schema.siteDisabledModels)
-    .where(eq(schema.siteDisabledModels.siteId, site.id))
-    .all();
-  const disabledPatterns = disabledModels.map((row) => row.modelName);
-  // 预览和写入使用同一过滤规则，避免站点禁用模型进入账号白名单。
   return models
     .map((model) => ({
       name: model.name,
-      contextLength: model.contextLength ?? null,
-      disabled: isModelDisabled(model.name, disabledPatterns)
+      contextLength: model.contextLength ?? null
     }));
 }
 
@@ -207,10 +183,4 @@ async function assertAccountExists(accountId: number): Promise<void> {
 
 function normalizeModelNames(models: string[]): string[] {
   return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
-}
-
-function accountProxyUrl(extraConfig: string | null): string | null {
-  const parsed = parseJsonObject(extraConfig);
-  const value = parsed?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

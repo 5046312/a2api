@@ -25,7 +25,6 @@ export type OAuthSessionInfo = {
 };
 
 type OAuthSessionRecord = OAuthSessionInfo & {
-  siteId: number | null;
   projectId: string | null;
   proxyUrl: string | null;
 };
@@ -38,7 +37,6 @@ type ImportedOAuthCredential = {
   username?: string | null;
   email?: string | null;
   projectId?: string | null;
-  siteId?: number | null;
   proxyUrl?: string | null;
   providerData?: unknown;
 };
@@ -54,7 +52,6 @@ const providerDefaults: Record<OAuthProviderId, { label: string; url: string }> 
 
 export function startOAuthSession(input: {
   provider: OAuthProviderId;
-  siteId?: number | null;
   projectId?: string | null;
   proxyUrl?: string | null;
   callbackBaseUrl?: string | null;
@@ -72,7 +69,6 @@ export function startOAuthSession(input: {
     manualCallbackRequired: true,
     accountId: null,
     message: null,
-    siteId: input.siteId ?? null,
     projectId: input.projectId?.trim() || null,
     proxyUrl: input.proxyUrl?.trim() || null,
     createdAt: now,
@@ -163,8 +159,8 @@ export async function refreshOAuthConnectionQuota(accountId: number) {
 
 async function upsertOAuthCredential(input: ImportedOAuthCredential) {
   const now = nowIso();
-  const siteId = input.siteId || await ensureOAuthSite(input.provider);
   const accountKey = input.accountKey || input.email || input.username || `${input.provider}:${input.accessToken.slice(0, 12)}`;
+  const defaults = providerDefaults[input.provider];
   const existing = await db
     .select()
     .from(schema.accounts)
@@ -180,8 +176,10 @@ async function upsertOAuthCredential(input: ImportedOAuthCredential) {
   if (existing) {
     return db.update(schema.accounts)
       .set({
-        siteId,
         username: input.username ?? input.email ?? existing.username,
+        baseUrl: existing.baseUrl || defaults.url,
+        platform: input.provider,
+        proxyUrl: input.proxyUrl ?? existing.proxyUrl,
         credentialMode: 'oauth',
         accessToken: input.accessToken,
         oauthProvider: input.provider,
@@ -198,8 +196,10 @@ async function upsertOAuthCredential(input: ImportedOAuthCredential) {
 
   return db.insert(schema.accounts)
     .values({
-      siteId,
       username: input.username ?? input.email ?? accountKey,
+      baseUrl: defaults.url,
+      platform: input.provider,
+      proxyUrl: input.proxyUrl ?? null,
       credentialMode: 'oauth',
       accessToken: input.accessToken,
       oauthProvider: input.provider,
@@ -212,25 +212,6 @@ async function upsertOAuthCredential(input: ImportedOAuthCredential) {
     })
     .returning()
     .get();
-}
-
-async function ensureOAuthSite(provider: OAuthProviderId): Promise<number> {
-  const existing = await db.select().from(schema.sites).where(eq(schema.sites.platform, provider)).get();
-  if (existing) return existing.id;
-  const defaults = providerDefaults[provider];
-  const now = nowIso();
-  const inserted = await db.insert(schema.sites)
-    .values({
-      name: defaults.label,
-      url: defaults.url,
-      platform: provider,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now
-    })
-    .returning({ id: schema.sites.id })
-    .get();
-  return inserted.id;
 }
 
 async function findOAuthAccount(accountId: number) {
@@ -256,7 +237,6 @@ function credentialFromCallbackUrl(provider: OAuthProviderId, callbackUrl: strin
     username: readString(parsed.get('username')),
     email: readString(parsed.get('email')),
     projectId: record.projectId || readString(parsed.get('project_id')),
-    siteId: record.siteId,
     proxyUrl: record.proxyUrl,
     providerData: Object.fromEntries(parsed.entries())
   };
@@ -297,7 +277,6 @@ function normalizeImportedCredential(input: unknown): ImportedOAuthCredential {
     username: readString(row.username) || readString(row.name),
     email: readString(row.email),
     projectId: readString(row.projectId) || readString(row.project_id),
-    siteId: readPositiveInteger(row.siteId) || readPositiveInteger(row.site_id),
     proxyUrl: readString(row.proxyUrl) || readString(row.proxy_url),
     providerData: row
   };
@@ -310,11 +289,6 @@ function normalizeProvider(value: unknown): OAuthProviderId | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function readPositiveInteger(value: unknown): number | null {
-  const numberValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : null;
 }
 
 function toSessionInfo(record: OAuthSessionRecord): OAuthSessionInfo {

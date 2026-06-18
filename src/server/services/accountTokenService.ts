@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { getAdapter, type SitePlatform } from '../adapters/index.js';
+import { getAdapter, type UpstreamPlatform } from '../adapters/index.js';
 import type { ApiTokenInfo } from '../adapters/types.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
@@ -28,13 +28,13 @@ export type AccountApiCredential = {
   masked: string;
 };
 
-export function toAccountTokenView(row: AccountTokenRow & { accountName?: string | null; siteName?: string | null }) {
+export function toAccountTokenView(row: AccountTokenRow & { accountName?: string | null; upstreamName?: string | null }) {
   return {
     ...row,
     token: undefined,
     tokenMasked: maskSecret(row.token),
     accountName: row.accountName ?? null,
-    siteName: row.siteName ?? null
+    upstreamName: row.upstreamName ?? null
   };
 }
 
@@ -62,11 +62,10 @@ export async function listAccountTokens(query: { accountId?: number; enabled?: b
       createdAt: schema.accountTokens.createdAt,
       updatedAt: schema.accountTokens.updatedAt,
       accountName: schema.accounts.username,
-      siteName: schema.sites.name
+      upstreamName: schema.accounts.baseUrl
     })
     .from(schema.accountTokens)
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.accountTokens.accountId))
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(where)
     .orderBy(desc(schema.accountTokens.id))
     .limit(pageSize)
@@ -155,10 +154,8 @@ export async function deleteAccountToken(id: number): Promise<boolean> {
 export async function syncAccountTokens(accountId: number) {
   const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get();
   if (!account) throw new Error('Account not found');
-  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, account.siteId)).get();
-  if (!site) throw new Error('Site not found');
 
-  const adapter = getAdapter(site.platform);
+  const adapter = getAdapter(account.platform);
   const existing = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.accountId, accountId)).all();
   if (!adapter.getApiTokens) {
     return syncAccountTokenSummary(existing);
@@ -170,11 +167,11 @@ export async function syncAccountTokens(accountId: number) {
     includeAccessToken: true
   });
   const upstreamTokens = await adapter.getApiTokens({
-    siteId: site.id,
-    baseUrl: site.url,
-    platform: site.platform as SitePlatform,
-    proxyUrl: accountProxyUrl(account.extraConfig) || site.proxyUrl,
-    customHeaders: parseJsonObject(site.customHeaders) as Record<string, string> | null,
+    accountId: account.id,
+    baseUrl: account.baseUrl,
+    platform: account.platform as UpstreamPlatform,
+    proxyUrl: account.proxyUrl,
+    customHeaders: parseJsonObject(account.customHeaders) as Record<string, string> | null,
     accessToken: account.accessToken,
     apiToken: credential?.token ?? null
   });
@@ -393,10 +390,4 @@ async function insertSyncedToken(input: {
     })
     .returning()
     .get();
-}
-
-function accountProxyUrl(extraConfig: string | null): string | null {
-  const parsed = parseJsonObject(extraConfig);
-  const value = parsed?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

@@ -279,7 +279,7 @@ onMounted(loadMonitor);
                   <strong>{{ account.accountName }}</strong>
                 </td>
                 <td>
-                  <span>{{ account.sitePlatform }}</span>
+                  <span>{{ account.platform }}</span>
                 </td>
                 <td>{{ formatLatency(account.latencyMs) }}</td>
                 <td>{{ formatPercent(account.uptime24h) }}</td>

@@ -14,10 +14,6 @@ P0 implemented:
 - Admin auth and proxy auth.
 - Admin auth failure rate limit with `Retry-After`.
 - Unified upstream account management for API endpoint, API Key, platform, models, downstream keys, and proxy logs.
-- Internal site/upstream create/edit APIs remain for compatibility, while the main admin flow creates or reuses upstream config from the upstream account page.
-- Site batch enable/disable/delete and system-proxy toggles.
-- Site API endpoint pool management API and admin UI, with Chat proxy endpoint rotation and cooldown.
-- Site available model query plus disabled model management API and admin UI, applied during model discovery, route rebuild, and runtime route selection.
 - Upstream account create and edit right-side drawer UI for API endpoint, API Key, platform, authentication mode, account-level proxy, unit cost, status, pinned state, and sort order.
 - Upstream account model drawer for fixed account model lists, upstream model preview selection, and route rebuild after model changes.
 - Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
@@ -25,7 +21,7 @@ P0 implemented:
 - Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
 - Downstream key request and cost usage accounting, with upstream account `unitCost` used for usage-based cost estimates from non-stream JSON usage or stream SSE usage, plus admin usage reset.
 - Downstream key list keeps masked values in bulk responses and supports on-demand full-key copy from the key column.
-- Upstream account-level proxy configuration stored per upstream account and preferred before site or system proxy.
+- Upstream account-level proxy configuration stored per upstream account.
 - Legacy account key-list compatibility is kept internally for old imports; the admin UI uses upstream accounts only.
 - Dedicated platform adapters for OneHub, DoneHub, Veloera, AnyRouter, CliProxyAPI, and Claude model discovery.
 - Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
@@ -42,7 +38,6 @@ P0 implemented:
 - Webhook notification settings page and test send endpoint, with empty URL preserving the saved secret and explicit clear support.
 - System events and program logs pages with filters, unread count, mark-read, load-more, and clear operations.
 - In-memory background task registry and `GET /api/tasks` status APIs for later async operations.
-- Initial site announcements storage API with list, read, read-all, dismiss, clear, and JSON backup coverage.
 - About page with version, current stack, shipped capabilities, and deferred operations scope.
 - OAuth provider discovery, local session start/status/manual callback, callback entry, credential JSON import, local refresh/quota endpoints, and admin page.
 - OAuth upstream account list, enable/disable, refresh/quota, import, and delete APIs, surfaced in the admin UI.

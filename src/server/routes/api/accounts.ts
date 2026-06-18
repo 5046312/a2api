@@ -6,6 +6,7 @@ import {
   batchUpdateAccounts,
   createAccount,
   deleteAccount,
+  detectAccountPlatform,
   listAccounts,
   updateAccount,
   verifyAccountToken
@@ -21,7 +22,6 @@ const accountModelsPayloadSchema = z.object({
   models: z.array(z.string().trim()).default([])
 });
 const listQuerySchema = z.object({
-  siteId: z.coerce.number().int().optional(),
   status: z.string().optional(),
   page: z.coerce.number().int().optional(),
   pageSize: z.coerce.number().int().optional()
@@ -30,9 +30,16 @@ const listQuerySchema = z.object({
 export async function accountsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/accounts', async (request) => listAccounts(compactObject(listQuerySchema.parse(request.query))));
 
+  app.post('/api/accounts/detect-platform', async (request, reply) => {
+    const parsed = z.object({
+      baseUrl: z.string().trim().url()
+    }).safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
+    return detectAccountPlatform(parsed.data.baseUrl);
+  });
+
   app.post('/api/accounts/verify-token', async (request, reply) => {
     const parsed = z.object({
-      siteId: z.number().int().positive().optional(),
       baseUrl: z.string().trim().url().optional(),
       platform: z.string().trim().optional(),
       proxyUrl: z.string().trim().optional().nullable(),
@@ -49,7 +56,6 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         token,
         credentialMode: parsed.data.credentialMode
       };
-      if (parsed.data.siteId !== undefined) verifyPayload.siteId = parsed.data.siteId;
       if (parsed.data.baseUrl !== undefined) verifyPayload.baseUrl = parsed.data.baseUrl;
       if (parsed.data.platform !== undefined) verifyPayload.platform = parsed.data.platform;
       if (parsed.data.proxyUrl !== undefined) verifyPayload.proxyUrl = parsed.data.proxyUrl;
@@ -64,8 +70,8 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/accounts', async (request, reply) => {
     const parsed = accountPayloadSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
-    if (!parsed.data.siteId && !parsed.data.baseUrl) {
-      return sendError(reply, 400, 'validation_error', 'siteId or baseUrl is required', 'missing_upstream');
+    if (!parsed.data.baseUrl) {
+      return sendError(reply, 400, 'validation_error', 'baseUrl is required', 'missing_upstream');
     }
     const account = await createAccount(parsed.data);
     return account;

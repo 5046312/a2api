@@ -86,17 +86,10 @@ describe.sequential('migration gap plan coverage', () => {
     const { nowIso } = await import('../shared/time.js');
     const { refreshRouteDecisionSnapshot, getRouteDecisionSnapshot } = await import('./routeDecisionSnapshotService.js');
     const now = nowIso();
-    const site = db.insert(schema.sites).values({
-      name: 'OpenAI',
-      url: 'https://api.openai.com',
-      platform: 'openai',
-      status: 'active',
-      createdAt: now,
-      updatedAt: now
-    }).returning().get();
     const account = db.insert(schema.accounts).values({
-      siteId: site.id,
       username: 'test',
+      baseUrl: 'https://api.openai.com',
+      platform: 'openai',
       credentialMode: 'apikey',
       apiToken: 'sk-test',
       status: 'active',
@@ -135,17 +128,10 @@ describe.sequential('migration gap plan coverage', () => {
     const { nowIso } = await import('../shared/time.js');
     const monitor = await import('./accountMonitorService.js');
     const now = nowIso();
-    const site = db.insert(schema.sites).values({
-      name: 'Monitor OpenAI',
-      url: 'https://api.openai.com',
-      platform: 'openai',
-      status: 'active',
-      createdAt: now,
-      updatedAt: now
-    }).returning().get();
     const account = db.insert(schema.accounts).values({
-      siteId: site.id,
       username: 'monitor-account',
+      baseUrl: 'https://api.openai.com',
+      platform: 'openai',
       credentialMode: 'apikey',
       apiToken: 'sk-monitor',
       status: 'active',

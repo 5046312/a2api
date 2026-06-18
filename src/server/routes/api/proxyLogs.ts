@@ -14,7 +14,6 @@ export async function proxyLogsRoutes(app: FastifyInstance): Promise<void> {
       requestId: z.coerce.number().int().positive().optional(),
       status: z.string().optional(),
       model: z.string().optional(),
-      siteId: z.coerce.number().int().optional(),
       accountId: z.coerce.number().int().optional(),
       downstreamApiKeyId: z.coerce.number().int().optional(),
       isStream: optionalBooleanQuery,

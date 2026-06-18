@@ -101,8 +101,7 @@ function formatAttemptRoute(attempt: ProxyDebugTrace['attempts'][number]) {
 }
 
 function formatAttemptAccount(attempt: ProxyDebugTrace['attempts'][number]) {
-  const site = attempt.siteId ? `${formatId(attempt.siteId)}${attempt.sitePlatform ? ` (${attempt.sitePlatform})` : ''}` : '-';
-  return `${formatId(attempt.accountId)} / ${site}`;
+  return formatId(attempt.accountId);
 }
 
 // 日志时间只展示月日和时分秒，列表里不重复显示年份。
@@ -480,10 +479,8 @@ onMounted(loadPage);
                     <td>{{ selectedLog.accountName || formatId(selectedLog.accountId) }}</td>
                   </tr>
                   <tr>
-                    <th>最终站点</th>
-                    <td>{{ selectedLog.siteName || formatId(selectedLog.siteId) }}</td>
                     <th>最终上游地址</th>
-                    <td class="mono">{{ selectedTrace?.finalUpstreamPath || '-' }}</td>
+                    <td class="mono" colspan="3">{{ selectedTrace?.finalUpstreamPath || selectedLog.upstreamUrl || '-' }}</td>
                   </tr>
                   <tr>
                     <th>Billing</th>
@@ -507,7 +504,7 @@ onMounted(loadPage);
                   <tr>
                     <th>尝试</th>
                     <th>路由 / 通道</th>
-                    <th>账号 / 站点</th>
+                    <th>账号</th>
                     <th>实际模型</th>
                     <th>Endpoint</th>
                     <th>目标</th>

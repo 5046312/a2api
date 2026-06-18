@@ -1,4 +1,4 @@
-export type SitePlatform =
+export type UpstreamPlatform =
   | 'openai'
   | 'new-api'
   | 'one-api'
@@ -15,9 +15,9 @@ export type SitePlatform =
   | 'antigravity';
 
 export type AdapterRequestContext = {
-  siteId: number;
+  accountId: number;
   baseUrl: string;
-  platform: SitePlatform;
+  platform: UpstreamPlatform;
   proxyUrl?: string | null;
   customHeaders?: Record<string, string> | null;
 };
@@ -76,7 +76,7 @@ export type ApiTokenInfo = {
 };
 
 export type PlatformAdapter = {
-  readonly platformName: SitePlatform;
+  readonly platformName: UpstreamPlatform;
   detect(url: string): Promise<boolean>;
   verifyToken(input: VerifyTokenInput): Promise<TokenVerifyResult>;
   getBalance?(input: AuthenticatedInput): Promise<BalanceInfo | null>;

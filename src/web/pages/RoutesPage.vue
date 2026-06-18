@@ -34,7 +34,7 @@ const strategyAlert = computed(() => {
   }
   return {
     title: '加权随机',
-    content: '先按优先级筛到最小值，再按权重、站点权重和失败惩罚计算概率随机挑选通道。'
+    content: '先按优先级筛到最小值，再按通道权重和失败惩罚计算概率随机挑选通道。'
   };
 });
 
@@ -112,15 +112,12 @@ function formatDecisionReason(reason: string) {
   if (reason === 'excluded_channel') return '已排除该通道';
   if (reason === 'not_forced_channel') return '不是当前指定通道';
   if (reason === 'model_mismatch') return '模型不匹配';
-  if (reason === 'site_inactive') return '站点未启用';
   if (reason === 'account_inactive') return '上游账号未启用';
-  if (reason === 'site_model_disabled') return '站点已禁用该模型';
   if (reason === 'missing_account_api_key') return '缺少账号凭证';
   if (reason === 'model_denied_by_downstream_key') return '被密钥模型范围限制';
   if (reason === 'account_denied_by_downstream_key') return '被密钥授权范围限制';
   if (reason === 'cooldown') return '通道冷却中';
   if (reason.startsWith('weight=')) return `权重：${reason.slice('weight='.length)}`;
-  if (reason.startsWith('siteWeight=')) return `站点权重：${reason.slice('siteWeight='.length)}`;
   if (reason.startsWith('failPenalty=')) return `失败惩罚：${reason.slice('failPenalty='.length)}`;
   return reason;
 }

@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { detectPlatform, getAdapter, type SitePlatform } from '../adapters/index.js';
+import { detectPlatform, getAdapter, type UpstreamPlatform } from '../adapters/index.js';
 import { db, schema } from '../db/index.js';
 import { refreshAccountBalance } from './balanceService.js';
 import { normalizeBaseUrl } from '../shared/http.js';
@@ -10,7 +10,6 @@ import { nowIso } from '../shared/time.js';
 import { resolveDefaultAccountCredential } from './accountTokenService.js';
 
 export const accountPayloadSchema = z.object({
-  siteId: z.number().int().positive().optional(),
   name: z.string().trim().optional().nullable(),
   baseUrl: z.string().trim().url().optional().nullable(),
   platform: z.string().trim().optional().nullable(),
@@ -37,14 +36,8 @@ export const accountBatchPayloadSchema = z.object({
 export type AccountPayload = z.infer<typeof accountPayloadSchema>;
 export type AccountBatchPayload = z.infer<typeof accountBatchPayloadSchema>;
 export type AccountRow = typeof schema.accounts.$inferSelect;
-type SiteRow = typeof schema.sites.$inferSelect;
 
 export function toAccountView(row: AccountRow & {
-  siteName?: string | null;
-  sitePlatform?: string | null;
-  siteUrl?: string | null;
-  siteUseSystemProxy?: boolean | null;
-  siteCustomHeaders?: string | null;
   defaultApiKeyMasked?: string | null;
   modelCount?: number | null;
 }) {
@@ -53,35 +46,32 @@ export function toAccountView(row: AccountRow & {
   return {
     ...row,
     name: row.username,
-    baseUrl: row.siteUrl ?? null,
-    platform: row.sitePlatform ?? null,
-    customHeaders: parseJsonObject(row.siteCustomHeaders),
-    useSystemProxy: row.siteUseSystemProxy ?? false,
+    customHeaders: parseJsonObject(row.customHeaders),
     apiKeyMasked,
     apiTokenMasked: apiKeyMasked,
     apiToken: undefined,
     accessToken: undefined,
     accessTokenMasked: maskSecret(row.accessToken),
     extraConfig,
-    proxyUrl: accountProxyUrl(extraConfig),
-    siteName: row.siteName ?? null,
-    sitePlatform: row.sitePlatform ?? null,
     modelCount: Number(row.modelCount || 0)
   };
 }
 
-export async function listAccounts(query: { siteId?: number; status?: string; page?: number; pageSize?: number }) {
+export async function listAccounts(query: { status?: string; page?: number; pageSize?: number }) {
   const page = Math.max(1, query.page || 1);
   const pageSize = Math.min(200, Math.max(1, query.pageSize || 50));
   const filters = [];
-  if (query.siteId) filters.push(eq(schema.accounts.siteId, query.siteId));
   if (query.status) filters.push(eq(schema.accounts.status, query.status));
   const where = filters.length > 0 ? and(...filters) : undefined;
   const rows = await db
     .select({
       id: schema.accounts.id,
-      siteId: schema.accounts.siteId,
       username: schema.accounts.username,
+      baseUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
+      proxyUrl: schema.accounts.proxyUrl,
+      useSystemProxy: schema.accounts.useSystemProxy,
+      customHeaders: schema.accounts.customHeaders,
       credentialMode: schema.accounts.credentialMode,
       accessToken: schema.accounts.accessToken,
       apiToken: schema.accounts.apiToken,
@@ -99,15 +89,9 @@ export async function listAccounts(query: { siteId?: number; status?: string; pa
       oauthProjectId: schema.accounts.oauthProjectId,
       extraConfig: schema.accounts.extraConfig,
       createdAt: schema.accounts.createdAt,
-      updatedAt: schema.accounts.updatedAt,
-      siteName: schema.sites.name,
-      sitePlatform: schema.sites.platform,
-      siteUrl: schema.sites.url,
-      siteUseSystemProxy: schema.sites.useSystemProxy,
-      siteCustomHeaders: schema.sites.customHeaders
+      updatedAt: schema.accounts.updatedAt
     })
     .from(schema.accounts)
-    .leftJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(where)
     .orderBy(desc(schema.accounts.isPinned), schema.accounts.sortOrder, desc(schema.accounts.id))
     .limit(pageSize)
@@ -131,7 +115,6 @@ export async function listAccounts(query: { siteId?: number; status?: string; pa
 }
 
 export async function verifyAccountToken(payload: {
-  siteId?: number;
   baseUrl?: string | null;
   platform?: string | null;
   proxyUrl?: string | null;
@@ -139,46 +122,31 @@ export async function verifyAccountToken(payload: {
   token: string;
   credentialMode: 'auto' | 'session' | 'apikey' | 'oauth';
 }) {
-  let siteId = 0;
-  let baseUrl = '';
-  let platform = '';
-  let proxyUrl: string | null = null;
-  let customHeaders: Record<string, string> | null = null;
-
-  if (payload.siteId) {
-    const site = await findSiteById(payload.siteId);
-    if (!site) throw new Error('Site not found');
-    siteId = site.id;
-    baseUrl = site.url;
-    platform = site.platform;
-    proxyUrl = site.proxyUrl;
-    customHeaders = parseJsonObject(site.customHeaders) as Record<string, string> | null;
-  } else {
-    if (!payload.baseUrl) throw new Error('baseUrl is required when siteId is missing');
-    baseUrl = normalizeBaseUrl(payload.baseUrl);
-    const detected = payload.platform ? null : await detectPlatform(baseUrl);
-    platform = payload.platform?.trim() || detected?.platform || 'openai';
-    proxyUrl = payload.proxyUrl ?? null;
-    customHeaders = payload.customHeaders ?? null;
-  }
+  if (!payload.baseUrl) throw new Error('baseUrl is required');
+  const baseUrl = normalizeBaseUrl(payload.baseUrl);
+  const detected = payload.platform ? null : await detectPlatform(baseUrl);
+  const platform = payload.platform?.trim() || detected?.platform || 'openai';
 
   const adapter = getAdapter(platform);
   return adapter.verifyToken({
-    siteId,
+    accountId: 0,
     baseUrl,
-    platform: platform as SitePlatform,
-    proxyUrl,
-    customHeaders,
+    platform: platform as UpstreamPlatform,
+    proxyUrl: payload.proxyUrl ?? null,
+    customHeaders: payload.customHeaders ?? null,
     token: payload.token,
     credentialMode: payload.credentialMode
   });
 }
 
+export async function detectAccountPlatform(baseUrl: string) {
+  return detectPlatform(normalizeBaseUrl(baseUrl));
+}
+
 export async function createAccount(payload: AccountPayload) {
   const now = nowIso();
-  const site = await resolveSiteForAccountPayload(payload);
-  if (!site) throw new Error('baseUrl is required when siteId is missing');
-  const extraConfig = mergeAccountExtraConfig(payload.extraConfig ?? null, payload.proxyUrl);
+  const upstream = await resolveUpstreamForAccountPayload(payload);
+  if (!upstream) throw new Error('baseUrl is required');
   const maxSortOrderRow = await db
     .select({ value: sql<number>`coalesce(max(${schema.accounts.sortOrder}), -1)` })
     .from(schema.accounts)
@@ -186,8 +154,12 @@ export async function createAccount(payload: AccountPayload) {
   const inserted = await db
     .insert(schema.accounts)
     .values({
-      siteId: site.id,
       username: payload.name ?? payload.username ?? null,
+      baseUrl: upstream.baseUrl,
+      platform: upstream.platform,
+      proxyUrl: payload.proxyUrl ?? null,
+      useSystemProxy: payload.useSystemProxy ?? false,
+      customHeaders: payload.customHeaders ? stringifyJson(payload.customHeaders) : null,
       credentialMode: payload.credentialMode,
       accessToken: payload.accessToken ?? null,
       apiToken: payload.apiKey ?? payload.apiToken ?? null,
@@ -195,7 +167,7 @@ export async function createAccount(payload: AccountPayload) {
       status: payload.status ?? 'active',
       isPinned: payload.isPinned ?? false,
       sortOrder: payload.sortOrder ?? Number(maxSortOrderRow?.value ?? -1) + 1,
-      extraConfig: extraConfig ? stringifyJson(extraConfig) : null,
+      extraConfig: payload.extraConfig ? stringifyJson(payload.extraConfig) : null,
       createdAt: now,
       updatedAt: now
     })
@@ -204,26 +176,28 @@ export async function createAccount(payload: AccountPayload) {
   const credential = await resolveDefaultAccountCredential(inserted.id, { apiToken: inserted.apiToken });
   return toAccountView({
     ...inserted,
-    defaultApiKeyMasked: credential?.masked ?? '',
-    siteName: site.name,
-    sitePlatform: site.platform,
-    siteUrl: site.url,
-    siteUseSystemProxy: site.useSystemProxy,
-    siteCustomHeaders: site.customHeaders
+    defaultApiKeyMasked: credential?.masked ?? ''
   });
 }
 
 export async function updateAccount(id: number, payload: Partial<AccountPayload>) {
   const current = await db.select().from(schema.accounts).where(eq(schema.accounts.id, id)).get();
   if (!current) return null;
-  const site = await resolveSiteForAccountPayload(payload, current);
-  const nextExtraConfig = accountExtraConfigForUpdate(current, payload);
+  const upstream = await resolveUpstreamForAccountPayload(payload, current);
   const nextApiToken = accountApiTokenForUpdate(current, payload);
   const updated = await db
     .update(schema.accounts)
     .set({
-      siteId: site?.id ?? payload.siteId ?? current.siteId,
       username: payload.name === undefined && payload.username === undefined ? current.username : payload.name ?? payload.username ?? null,
+      baseUrl: upstream?.baseUrl ?? current.baseUrl,
+      platform: upstream?.platform ?? current.platform,
+      proxyUrl: payload.proxyUrl === undefined ? current.proxyUrl : payload.proxyUrl,
+      useSystemProxy: payload.useSystemProxy ?? current.useSystemProxy,
+      customHeaders: payload.customHeaders === undefined
+        ? current.customHeaders
+        : payload.customHeaders === null
+          ? null
+          : stringifyJson(payload.customHeaders),
       credentialMode: payload.credentialMode ?? current.credentialMode,
       accessToken: payload.accessToken === undefined ? current.accessToken : payload.accessToken,
       apiToken: nextApiToken,
@@ -231,22 +205,16 @@ export async function updateAccount(id: number, payload: Partial<AccountPayload>
       status: payload.status ?? current.status,
       isPinned: payload.isPinned ?? current.isPinned,
       sortOrder: payload.sortOrder ?? current.sortOrder,
-      extraConfig: nextExtraConfig,
+      extraConfig: payload.extraConfig === undefined ? current.extraConfig : payload.extraConfig ? stringifyJson(payload.extraConfig) : null,
       updatedAt: nowIso()
     })
     .where(eq(schema.accounts.id, id))
     .returning()
     .get();
-  const nextSite = site ?? (await findSiteById(updated.siteId));
   const credential = await resolveDefaultAccountCredential(updated.id, { apiToken: updated.apiToken });
   return toAccountView({
     ...updated,
-    defaultApiKeyMasked: credential?.masked ?? '',
-    siteName: nextSite?.name ?? null,
-    sitePlatform: nextSite?.platform ?? null,
-    siteUrl: nextSite?.url ?? null,
-    siteUseSystemProxy: nextSite?.useSystemProxy ?? false,
-    siteCustomHeaders: nextSite?.customHeaders ?? null
+    defaultApiKeyMasked: credential?.masked ?? ''
   });
 }
 
@@ -301,13 +269,6 @@ export async function batchUpdateAccounts(payload: AccountBatchPayload) {
   };
 }
 
-function accountExtraConfigForUpdate(current: AccountRow, payload: Partial<AccountPayload>): string | null {
-  if (payload.extraConfig === undefined && payload.proxyUrl === undefined) return current.extraConfig;
-  const baseExtraConfig = payload.extraConfig === undefined ? parseJsonObject(current.extraConfig) : payload.extraConfig;
-  const nextExtraConfig = mergeAccountExtraConfig(baseExtraConfig ?? null, payload.proxyUrl);
-  return nextExtraConfig ? stringifyJson(nextExtraConfig) : null;
-}
-
 function accountApiTokenForUpdate(current: AccountRow, payload: Partial<AccountPayload>) {
   const nextToken = payload.apiKey ?? payload.apiToken;
   if (nextToken !== undefined && nextToken !== null && nextToken.trim() !== '') {
@@ -316,103 +277,19 @@ function accountApiTokenForUpdate(current: AccountRow, payload: Partial<AccountP
   return current.apiToken;
 }
 
-async function resolveSiteForAccountPayload(payload: Partial<AccountPayload>, current?: AccountRow): Promise<SiteRow | null> {
-  if (!payload.baseUrl && !payload.platform && payload.customHeaders === undefined && payload.useSystemProxy === undefined) {
-    if (payload.siteId) return findSiteById(payload.siteId);
-    if (current) return findSiteById(current.siteId);
-    return null;
+async function resolveUpstreamForAccountPayload(
+  payload: Partial<AccountPayload>,
+  current?: AccountRow
+): Promise<{ baseUrl: string; platform: string } | null> {
+  if (!payload.baseUrl && !payload.platform) {
+    if (!current) return null;
+    return { baseUrl: current.baseUrl, platform: current.platform };
   }
-
-  const currentSite = current ? await findSiteById(current.siteId) : null;
-  const baseUrl = payload.baseUrl ? normalizeBaseUrl(payload.baseUrl) : currentSite?.url;
-  if (!baseUrl) return payload.siteId ? findSiteById(payload.siteId) : null;
-
+  const baseUrl = payload.baseUrl ? normalizeBaseUrl(payload.baseUrl) : current?.baseUrl;
+  if (!baseUrl) return null;
   const detected = payload.platform ? null : await detectPlatform(baseUrl);
-  const platform = (payload.platform?.trim() || detected?.platform || currentSite?.platform || 'openai') as string;
-  const existing = await db
-    .select()
-    .from(schema.sites)
-    .where(and(eq(schema.sites.platform, platform), eq(schema.sites.url, baseUrl)))
-    .get();
-  if (existing) return updateInternalSite(existing, payload);
-
-  const now = nowIso();
-  const name = payload.name?.trim() || payload.username?.trim() || siteNameFromUrl(baseUrl);
-  const inserted = await db.insert(schema.sites).values({
-    name,
-    url: baseUrl,
-    platform,
-    useSystemProxy: payload.useSystemProxy ?? currentSite?.useSystemProxy ?? false,
-    customHeaders: payload.customHeaders === undefined
-      ? currentSite?.customHeaders ?? null
-      : payload.customHeaders === null
-        ? null
-        : stringifyJson(payload.customHeaders),
-    globalWeight: currentSite?.globalWeight ?? 1,
-    status: currentSite?.status ?? 'active',
-    createdAt: now,
-    updatedAt: now
-  }).returning().get();
-  await db.insert(schema.siteApiEndpoints).values({
-    siteId: inserted.id,
-    url: baseUrl,
-    enabled: true,
-    sortOrder: 0,
-    createdAt: now,
-    updatedAt: now
-  }).run();
-  return inserted;
-}
-
-async function updateInternalSite(site: SiteRow, payload: Partial<AccountPayload>): Promise<SiteRow> {
-  if (payload.customHeaders === undefined && payload.useSystemProxy === undefined) return site;
-  const updated = await db.update(schema.sites)
-    .set({
-      customHeaders: payload.customHeaders === undefined
-        ? site.customHeaders
-        : payload.customHeaders === null
-          ? null
-          : stringifyJson(payload.customHeaders),
-      useSystemProxy: payload.useSystemProxy ?? site.useSystemProxy,
-      updatedAt: nowIso()
-    })
-    .where(eq(schema.sites.id, site.id))
-    .returning()
-    .get();
-  return updated ?? site;
-}
-
-async function findSiteById(siteId: number): Promise<SiteRow | null> {
-  const site = await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
-  return site ?? null;
-}
-
-function siteNameFromUrl(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).hostname || baseUrl;
-  } catch {
-    return baseUrl;
-  }
-}
-
-// 账号级代理复用 extraConfig，避免为单个配置项新增数据库字段。
-function mergeAccountExtraConfig(
-  extraConfig: Record<string, unknown> | null,
-  proxyUrl: string | null | undefined
-): Record<string, unknown> | null {
-  const next = { ...(extraConfig ?? {}) };
-  if (proxyUrl !== undefined) {
-    const normalizedProxyUrl = typeof proxyUrl === 'string' ? proxyUrl.trim() : '';
-    if (normalizedProxyUrl) {
-      next.proxyUrl = normalizedProxyUrl;
-    } else {
-      delete next.proxyUrl;
-    }
-  }
-  return Object.keys(next).length > 0 ? next : null;
-}
-
-function accountProxyUrl(extraConfig: Record<string, unknown> | null): string | null {
-  const value = extraConfig?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
+  return {
+    baseUrl,
+    platform: payload.platform?.trim() || detected?.platform || current?.platform || 'openai'
+  };
 }

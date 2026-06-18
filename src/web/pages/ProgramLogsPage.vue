@@ -27,8 +27,7 @@ const logTypeOptions = [
   { label: '余额', value: 'balance' },
   { label: '账号', value: 'account' },
   { label: '系统', value: 'system' },
-  { label: '状态', value: 'status' },
-  { label: '上游公告', value: 'site_notice' }
+  { label: '状态', value: 'status' }
 ];
 
 watch(message, (value) => {

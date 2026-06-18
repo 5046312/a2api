@@ -1,6 +1,6 @@
 import { fetchJson, mergeCustomHeaders, normalizeBaseUrl, resolveOpenAiPath } from '../shared/http.js';
 import { OpenAiCompatibleAdapter } from './openaiCompatible.js';
-import type { ModelDiscoveryInput, ModelInfo, SitePlatform } from './types.js';
+import type { ModelDiscoveryInput, ModelInfo, UpstreamPlatform } from './types.js';
 
 type ModelsPayload = {
   data?: Array<{ id?: string; root?: string; context_length?: number; contextLength?: number }>;
@@ -93,7 +93,7 @@ export class ClaudeAdapter extends OpenAiCompatibleAdapter {
     if (claudeModels.length > 0) return claudeModels;
     const fallbackBaseUrl = openAiCompatibleFallbackBaseUrl(input.baseUrl);
     if (!fallbackBaseUrl) return claudeModels;
-    return super.getModels({ ...input, baseUrl: fallbackBaseUrl, platform: 'openai' as SitePlatform });
+    return super.getModels({ ...input, baseUrl: fallbackBaseUrl, platform: 'openai' as UpstreamPlatform });
   }
 
   private async getClaudeModels(input: ModelDiscoveryInput): Promise<ModelInfo[]> {

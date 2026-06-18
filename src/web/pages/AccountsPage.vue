@@ -488,7 +488,7 @@ async function detectPlatform() {
   detecting.value = true;
   error.value = '';
   try {
-    const result = await api.detectSite(accountForm.baseUrl.trim());
+    const result = await api.detectAccountPlatform(accountForm.baseUrl.trim());
     if (result.platform) {
       accountForm.platform = result.platform;
       message.value = `已识别平台：${result.platform}`;

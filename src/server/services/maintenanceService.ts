@@ -32,9 +32,6 @@ export type FactoryResetResult = {
   success: true;
   message: string;
   deleted: {
-    siteApiEndpoints: number;
-    siteDisabledModels: number;
-    sites: number;
     accounts: number;
     accountTokens: number;
     modelAvailability: number;
@@ -49,7 +46,6 @@ export type FactoryResetResult = {
     proxyVideoTasks: number;
     accountMonitors: number;
     monitorHeartbeats: number;
-    siteAnnouncements: number;
     settings: number;
     events: number;
   };
@@ -167,19 +163,12 @@ export function factoryReset(): FactoryResetResult {
     const accountTokens = db.delete(schema.accountTokens).run().changes;
     const accounts = db.delete(schema.accounts).run().changes;
     const tokenRoutes = db.delete(schema.tokenRoutes).run().changes;
-    const siteAnnouncements = db.delete(schema.siteAnnouncements).run().changes;
-    const siteDisabledModels = db.delete(schema.siteDisabledModels).run().changes;
-    const siteApiEndpoints = db.delete(schema.siteApiEndpoints).run().changes;
-    const sites = db.delete(schema.sites).run().changes;
     const downstreamKeys = db.delete(schema.downstreamApiKeys).run().changes;
     const proxyFiles = db.delete(schema.proxyFiles).run().changes;
     const proxyVideoTasks = db.delete(schema.proxyVideoTasks).run().changes;
     const settings = db.delete(schema.settings).run().changes;
     const events = db.delete(schema.events).run().changes;
     return {
-      siteApiEndpoints,
-      siteDisabledModels,
-      sites,
       accounts,
       accountTokens,
       modelAvailability,
@@ -194,7 +183,6 @@ export function factoryReset(): FactoryResetResult {
       proxyVideoTasks,
       accountMonitors,
       monitorHeartbeats,
-      siteAnnouncements,
       settings,
       events
     };

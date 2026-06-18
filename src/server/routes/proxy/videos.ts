@@ -7,12 +7,6 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { recordManagedKeyCostUsage } from '../../services/downstreamKeyService.js';
 import { createProxyDebugTrace, finalizeProxyDebugTrace, recordProxyDebugAttempt } from '../../services/proxyDebugTraceService.js';
 import { createPendingProxyLog, finalizeProxyLog } from '../../services/proxyLogService.js';
-import {
-  recordSiteApiEndpointFailure,
-  recordSiteApiEndpointSuccess,
-  selectSiteApiEndpointTarget,
-  type SiteApiEndpointTarget
-} from '../../services/siteApiEndpointService.js';
 import { recordChannelFailure, recordChannelSuccess, selectChannel, type SelectedChannel } from '../../services/tokenRouter.js';
 import {
   buildProxyVideoTaskTokenRef,
@@ -161,209 +155,180 @@ async function createVideoTaskWithChannel(input: {
   startedAt: number;
   reply: FastifyReply;
 }): Promise<{ done: true; response: unknown } | { done: false; error: string }> {
-  const excludedEndpointIds: number[] = [];
-  let lastEndpointError = 'No available site endpoint';
+  const targetUrl = resolveOpenAiPath(input.selected.baseUrl, '/v1/videos');
+  const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
+  let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+  const attemptIndex = input.takeAttemptIndex();
 
-  while (true) {
-    const target = await selectSiteApiEndpointTarget(input.selected.siteId, input.selected.siteUrl, excludedEndpointIds);
-    if (!target) {
-      await recordChannelFailure(input.selected.channelId, lastEndpointError);
-      return { done: false, error: lastEndpointError };
+  try {
+    const upstreamRequest = await buildVideoCreateUpstreamRequest(input.createInput, input.selected.sourceModel);
+    const headers = buildVideoHeaders({
+      requestHeaders: input.requestHeaders,
+      customHeaders: input.selected.customHeaders,
+      token: input.selected.accountToken,
+      contentType: upstreamRequest.contentType
+    });
+    const dispatcher = fetchDispatcher(input.selected.proxyUrl);
+    const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
+      method: 'POST',
+      headers
+    };
+    if (upstreamRequest.body !== undefined) fetchOptions.body = upstreamRequest.body;
+    if (dispatcher) fetchOptions.dispatcher = dispatcher;
+    if (controller) {
+      fetchOptions.signal = controller.signal;
+      firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
     }
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      channelId: input.selected.channelId,
+      routeId: input.selected.routeId,
+      accountId: input.selected.accountId,
+      modelActual: input.selected.sourceModel,
+      endpoint: formatSelectedEndpointName(input.selected),
+      requestPath: '/v1/videos',
+      targetUrl,
+      requestHeaders: headers
+    });
+    const response = await fetch(targetUrl, fetchOptions);
+    if (firstByteTimer) clearTimeout(firstByteTimer);
+    const responseHeaders = headersToRecord(response.headers);
 
-    const targetUrl = resolveOpenAiPath(target.baseUrl, '/v1/videos');
-    const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
-    let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
-    const attemptIndex = input.takeAttemptIndex();
-
-    try {
-      const upstreamRequest = await buildVideoCreateUpstreamRequest(input.createInput, input.selected.sourceModel);
-      const headers = buildVideoHeaders({
-        requestHeaders: input.requestHeaders,
-        customHeaders: input.selected.customHeaders,
-        token: input.selected.accountToken,
-        contentType: upstreamRequest.contentType
-      });
-      const dispatcher = fetchDispatcher(input.selected.proxyUrl);
-      const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
-        method: 'POST',
-        headers
-      };
-      if (upstreamRequest.body !== undefined) fetchOptions.body = upstreamRequest.body;
-      if (dispatcher) fetchOptions.dispatcher = dispatcher;
-      if (controller) {
-        fetchOptions.signal = controller.signal;
-        firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
-      }
-      await recordProxyDebugAttempt({
-        traceId: input.traceId,
-        attemptIndex,
-        channelId: input.selected.channelId,
-        routeId: input.selected.routeId,
-        accountId: input.selected.accountId,
-        siteId: input.selected.siteId,
-        sitePlatform: input.selected.sitePlatform,
-        modelActual: input.selected.sourceModel,
-        endpointId: target.endpointId,
-        endpoint: formatEndpointName(input.selected, target),
-        requestPath: '/v1/videos',
-        targetUrl,
-        requestHeaders: headers
-      });
-      const response = await fetch(targetUrl, fetchOptions);
-      if (firstByteTimer) clearTimeout(firstByteTimer);
-      const responseHeaders = headersToRecord(response.headers);
-
-      if (!response.ok) {
-        const text = await response.text();
-        const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
-        lastEndpointError = error;
-        const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
-        await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex,
-          endpoint: formatEndpointName(input.selected, target),
-          requestPath: '/v1/videos',
-          targetUrl,
-          requestHeaders: headers,
-          responseStatus: response.status,
-          responseHeaders,
-          rawErrorText: error
-        });
-        if (endpointFailure.retryable && target.endpointId !== null) {
-          excludedEndpointIds.push(target.endpointId);
-          continue;
-        }
-        await recordChannelFailure(input.selected.channelId, error);
-        if (isRetryableStatus(response.status)) return { done: false, error };
-        await writeVideoCreateFailure(input, response.status, targetUrl, responseHeaders, error);
-        return {
-          done: true,
-          response: sendError(input.reply, upstreamStatusToClientStatus(response.status), 'upstream_error', error, 'upstream_error')
-        };
-      }
-
+    if (!response.ok) {
       const text = await response.text();
-      const payload = parseJsonPayload(text);
-      if (!payload) {
-        const error = `Upstream returned non-JSON response: ${text.slice(0, 160)}`;
-        await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex,
-          endpoint: formatEndpointName(input.selected, target),
-          requestPath: '/v1/videos',
-          targetUrl,
-          requestHeaders: headers,
-          responseStatus: response.status,
-          responseHeaders,
-          rawErrorText: error
-        });
-        await recordChannelFailure(input.selected.channelId, error);
-        await writeVideoCreateFailure(input, 502, targetUrl, responseHeaders, error);
-        return { done: true, response: sendError(input.reply, 502, 'upstream_error', error, 'upstream_error') };
-      }
-
-      const upstreamVideoId = typeof payload.id === 'string' ? payload.id.trim() : '';
-      if (!upstreamVideoId) {
-        const error = 'Upstream video response did not include id';
-        await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex,
-          endpoint: formatEndpointName(input.selected, target),
-          requestPath: '/v1/videos',
-          targetUrl,
-          requestHeaders: headers,
-          responseStatus: response.status,
-          responseHeaders,
-          rawErrorText: error
-        });
-        await recordChannelFailure(input.selected.channelId, error);
-        await writeVideoCreateFailure(input, 502, targetUrl, responseHeaders, error);
-        return { done: true, response: sendError(input.reply, 502, 'upstream_error', error, 'upstream_error') };
-      }
-
-      const mapping = await saveProxyVideoTask({
-        upstreamVideoId,
-        siteUrl: target.baseUrl,
-        tokenRef: buildProxyVideoTaskTokenRef({ accountId: input.selected.accountId, tokenId: input.selected.tokenId }),
-        requestedModel: input.selected.requestedModel,
-        actualModel: input.selected.sourceModel,
-        channelId: input.selected.channelId,
-        accountId: input.selected.accountId,
-        statusSnapshot: payload,
-        upstreamResponseMeta: { contentType: response.headers.get('content-type') || 'application/json' },
-        lastUpstreamStatus: response.status
-      });
-
+      const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
       await recordProxyDebugAttempt({
         traceId: input.traceId,
         attemptIndex,
-        endpoint: formatEndpointName(input.selected, target),
+        endpoint: formatSelectedEndpointName(input.selected),
         requestPath: '/v1/videos',
         targetUrl,
         requestHeaders: headers,
         responseStatus: response.status,
-        responseHeaders
+        responseHeaders,
+        rawErrorText: error
       });
-      await recordSiteApiEndpointSuccess(target.endpointId);
-      await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, 0);
-      if (input.downstreamApiKeyId !== null) await recordManagedKeyCostUsage(input.downstreamApiKeyId, 0);
-      await finalizeProxyDebugTrace(input.traceId, {
-        selectedChannelId: input.selected.channelId,
-        selectedRouteId: input.selected.routeId,
-        selectedAccountId: input.selected.accountId,
-        selectedSiteId: input.selected.siteId,
-        selectedSitePlatform: input.selected.sitePlatform,
-        decisionSummary: { retryCount: input.retryCount },
-        finalStatus: 'success',
-        finalHttpStatus: response.status,
-        finalUpstreamPath: targetUrl,
-        finalResponseHeaders: responseHeaders
-      });
-      await finalizeProxyLog({
-        id: input.logId,
-        debugTraceId: input.traceId,
-        routeId: input.selected.routeId,
-        channelId: input.selected.channelId,
-        accountId: input.selected.accountId,
-        downstreamApiKeyId: input.downstreamApiKeyId,
-        modelRequested: input.selected.requestedModel,
-        modelActual: input.selected.sourceModel,
-        status: 'success',
-        httpStatus: response.status,
-        isStream: false,
-        latencyMs: Date.now() - input.startedAt,
-        retryCount: input.retryCount
-      });
+      await recordChannelFailure(input.selected.channelId, error);
+      if (isRetryableStatus(response.status)) return { done: false, error };
+      await writeVideoCreateFailure(input, response.status, targetUrl, responseHeaders, error);
       return {
         done: true,
-        response: input.reply.code(response.status).send(rewriteVideoResponsePublicId(payload, mapping.publicId))
+        response: sendError(input.reply, upstreamStatusToClientStatus(response.status), 'upstream_error', error, 'upstream_error')
       };
-    } catch (error) {
-      if (firstByteTimer) clearTimeout(firstByteTimer);
-      const message = error instanceof Error && error.name === 'AbortError' && config.proxyFirstByteTimeoutSec > 0
-        ? `First byte timeout after ${config.proxyFirstByteTimeoutSec}s`
-        : error instanceof Error
-          ? error.message
-          : 'Network error';
-      lastEndpointError = message;
-      const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
+    }
+
+    const text = await response.text();
+    const payload = parseJsonPayload(text);
+    if (!payload) {
+      const error = `Upstream returned non-JSON response: ${text.slice(0, 160)}`;
       await recordProxyDebugAttempt({
         traceId: input.traceId,
         attemptIndex,
-        endpoint: formatEndpointName(input.selected, target),
+        endpoint: formatSelectedEndpointName(input.selected),
         requestPath: '/v1/videos',
         targetUrl,
-        requestHeaders: {},
-        rawErrorText: message
+        requestHeaders: headers,
+        responseStatus: response.status,
+        responseHeaders,
+        rawErrorText: error
       });
-      if (endpointFailure.retryable && target.endpointId !== null) {
-        excludedEndpointIds.push(target.endpointId);
-        continue;
-      }
-      await recordChannelFailure(input.selected.channelId, message);
-      return { done: false, error: message };
+      await recordChannelFailure(input.selected.channelId, error);
+      await writeVideoCreateFailure(input, 502, targetUrl, responseHeaders, error);
+      return { done: true, response: sendError(input.reply, 502, 'upstream_error', error, 'upstream_error') };
     }
+
+    const upstreamVideoId = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!upstreamVideoId) {
+      const error = 'Upstream video response did not include id';
+      await recordProxyDebugAttempt({
+        traceId: input.traceId,
+        attemptIndex,
+        endpoint: formatSelectedEndpointName(input.selected),
+        requestPath: '/v1/videos',
+        targetUrl,
+        requestHeaders: headers,
+        responseStatus: response.status,
+        responseHeaders,
+        rawErrorText: error
+      });
+      await recordChannelFailure(input.selected.channelId, error);
+      await writeVideoCreateFailure(input, 502, targetUrl, responseHeaders, error);
+      return { done: true, response: sendError(input.reply, 502, 'upstream_error', error, 'upstream_error') };
+    }
+
+    const mapping = await saveProxyVideoTask({
+      upstreamVideoId,
+      upstreamUrl: input.selected.baseUrl,
+      tokenRef: buildProxyVideoTaskTokenRef({ accountId: input.selected.accountId, tokenId: input.selected.tokenId }),
+      requestedModel: input.selected.requestedModel,
+      actualModel: input.selected.sourceModel,
+      channelId: input.selected.channelId,
+      accountId: input.selected.accountId,
+      statusSnapshot: payload,
+      upstreamResponseMeta: { contentType: response.headers.get('content-type') || 'application/json' },
+      lastUpstreamStatus: response.status
+    });
+
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      endpoint: formatSelectedEndpointName(input.selected),
+      requestPath: '/v1/videos',
+      targetUrl,
+      requestHeaders: headers,
+      responseStatus: response.status,
+      responseHeaders
+    });
+    await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, 0);
+    if (input.downstreamApiKeyId !== null) await recordManagedKeyCostUsage(input.downstreamApiKeyId, 0);
+    await finalizeProxyDebugTrace(input.traceId, {
+      selectedChannelId: input.selected.channelId,
+      selectedRouteId: input.selected.routeId,
+      selectedAccountId: input.selected.accountId,
+      decisionSummary: { retryCount: input.retryCount },
+      finalStatus: 'success',
+      finalHttpStatus: response.status,
+      finalUpstreamPath: targetUrl,
+      finalResponseHeaders: responseHeaders
+    });
+    await finalizeProxyLog({
+      id: input.logId,
+      debugTraceId: input.traceId,
+      routeId: input.selected.routeId,
+      channelId: input.selected.channelId,
+      accountId: input.selected.accountId,
+      downstreamApiKeyId: input.downstreamApiKeyId,
+      modelRequested: input.selected.requestedModel,
+      modelActual: input.selected.sourceModel,
+      status: 'success',
+      httpStatus: response.status,
+      isStream: false,
+      latencyMs: Date.now() - input.startedAt,
+      retryCount: input.retryCount
+    });
+    return {
+      done: true,
+      response: input.reply.code(response.status).send(rewriteVideoResponsePublicId(payload, mapping.publicId))
+    };
+  } catch (error) {
+    if (firstByteTimer) clearTimeout(firstByteTimer);
+    const message = error instanceof Error && error.name === 'AbortError' && config.proxyFirstByteTimeoutSec > 0
+      ? `First byte timeout after ${config.proxyFirstByteTimeoutSec}s`
+      : error instanceof Error
+        ? error.message
+        : 'Network error';
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      endpoint: formatSelectedEndpointName(input.selected),
+      requestPath: '/v1/videos',
+      targetUrl,
+      requestHeaders: {},
+      rawErrorText: message
+    });
+    await recordChannelFailure(input.selected.channelId, message);
+    return { done: false, error: message };
   }
 }
 
@@ -451,94 +416,72 @@ async function requestMappedVideoTaskUpstream(input: {
   | { ok: true; response: Response; targetUrl: string }
   | { ok: false; status: number; message: string }
 > {
-  const excludedEndpointIds: number[] = [];
-  let lastEndpointError = 'No available site endpoint';
+  const targetUrl = resolveOpenAiPath(input.credential.upstreamUrl, `/v1/videos/${encodeURIComponent(input.mapping.upstreamVideoId)}`);
+  const headers = buildVideoHeaders({
+    requestHeaders: input.requestHeaders,
+    customHeaders: input.credential.customHeaders,
+    token: input.credential.token,
+    contentType: null
+  });
+  const attemptIndex = input.takeAttemptIndex();
 
-  while (true) {
-    const target = await selectSiteApiEndpointTarget(input.credential.site.id, input.credential.site.url, excludedEndpointIds);
-    if (!target) return { ok: false, status: 503, message: lastEndpointError };
-
-    const targetUrl = resolveOpenAiPath(target.baseUrl, `/v1/videos/${encodeURIComponent(input.mapping.upstreamVideoId)}`);
-    const headers = buildVideoHeaders({
-      requestHeaders: input.requestHeaders,
-      customHeaders: input.credential.customHeaders,
-      token: input.credential.token,
-      contentType: null
+  try {
+    const dispatcher = fetchDispatcher(input.credential.proxyUrl);
+    const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
+      method: input.method,
+      headers
+    };
+    if (dispatcher) fetchOptions.dispatcher = dispatcher;
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      endpoint: formatMappedEndpointName(input.credential),
+      requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
+      targetUrl,
+      requestHeaders: headers
     });
-    const attemptIndex = input.takeAttemptIndex();
+    const response = await fetch(targetUrl, fetchOptions);
+    const responseHeaders = headersToRecord(response.headers);
 
-    try {
-      const dispatcher = fetchDispatcher(input.credential.proxyUrl);
-      const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
-        method: input.method,
-        headers
-      };
-      if (dispatcher) fetchOptions.dispatcher = dispatcher;
+    if (!response.ok) {
+      const rawErrorText = await response.clone().text().catch(() => '');
       await recordProxyDebugAttempt({
         traceId: input.traceId,
         attemptIndex,
-        endpointId: target.endpointId,
-        endpoint: formatMappedEndpointName(input.credential, target),
-        requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
-        targetUrl,
-        requestHeaders: headers
-      });
-      const response = await fetch(targetUrl, fetchOptions);
-      const responseHeaders = headersToRecord(response.headers);
-
-      if (!response.ok) {
-        const rawErrorText = await response.clone().text().catch(() => '');
-        lastEndpointError = rawErrorText || `HTTP ${response.status}`;
-        const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: lastEndpointError });
-        await recordProxyDebugAttempt({
-          traceId: input.traceId,
-          attemptIndex,
-          endpoint: formatMappedEndpointName(input.credential, target),
-          requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
-          targetUrl,
-          requestHeaders: headers,
-          responseStatus: response.status,
-          responseHeaders,
-          rawErrorText: lastEndpointError
-        });
-        if (endpointFailure.retryable && target.endpointId !== null) {
-          excludedEndpointIds.push(target.endpointId);
-          continue;
-        }
-        return { ok: true, response, targetUrl };
-      }
-
-      await recordSiteApiEndpointSuccess(target.endpointId);
-      await recordProxyDebugAttempt({
-        traceId: input.traceId,
-        attemptIndex,
-        endpoint: formatMappedEndpointName(input.credential, target),
+        endpoint: formatMappedEndpointName(input.credential),
         requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
         targetUrl,
         requestHeaders: headers,
         responseStatus: response.status,
-        responseHeaders
+        responseHeaders,
+        rawErrorText: rawErrorText || `HTTP ${response.status}`
       });
       return { ok: true, response, targetUrl };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Network error';
-      lastEndpointError = message;
-      const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
-      await recordProxyDebugAttempt({
-        traceId: input.traceId,
-        attemptIndex,
-        endpoint: formatMappedEndpointName(input.credential, target),
-        requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
-        targetUrl,
-        requestHeaders: headers,
-        rawErrorText: message
-      });
-      if (endpointFailure.retryable && target.endpointId !== null) {
-        excludedEndpointIds.push(target.endpointId);
-        continue;
-      }
-      return { ok: false, status: 502, message };
     }
+
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      endpoint: formatMappedEndpointName(input.credential),
+      requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
+      targetUrl,
+      requestHeaders: headers,
+      responseStatus: response.status,
+      responseHeaders
+    });
+    return { ok: true, response, targetUrl };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Network error';
+    await recordProxyDebugAttempt({
+      traceId: input.traceId,
+      attemptIndex,
+      endpoint: formatMappedEndpointName(input.credential),
+      requestPath: `/v1/videos/${input.mapping.upstreamVideoId}`,
+      targetUrl,
+      requestHeaders: headers,
+      rawErrorText: message
+    });
+    return { ok: false, status: 502, message };
   }
 }
 
@@ -587,8 +530,6 @@ async function writeVideoCreateFailure(
     selectedChannelId: input.selected.channelId,
     selectedRouteId: input.selected.routeId,
     selectedAccountId: input.selected.accountId,
-    selectedSiteId: input.selected.siteId,
-    selectedSitePlatform: input.selected.sitePlatform,
     finalStatus: 'failed',
     finalHttpStatus: httpStatus,
     finalUpstreamPath: targetUrl,
@@ -725,12 +666,12 @@ function buildVideoHeaders(input: {
   return headers;
 }
 
-function formatEndpointName(selected: SelectedChannel, target: SiteApiEndpointTarget): string {
-  return target.endpointId === null ? selected.siteName : `${selected.siteName}#${target.endpointId}`;
+function formatSelectedEndpointName(selected: SelectedChannel): string {
+  return selected.accountName ? `${selected.accountName}#${selected.accountId}` : `account#${selected.accountId}`;
 }
 
-function formatMappedEndpointName(credential: ProxyVideoTaskCredential, target: SiteApiEndpointTarget): string {
-  return target.endpointId === null ? credential.site.name : `${credential.site.name}#${target.endpointId}`;
+function formatMappedEndpointName(credential: ProxyVideoTaskCredential): string {
+  return credential.accountName || credential.upstreamUrl;
 }
 
 function getStringField(formData: MultipartFormData, name: string): string {

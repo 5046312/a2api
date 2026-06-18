@@ -45,7 +45,6 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       .from(schema.tokenRoutes)
       .innerJoin(schema.routeChannels, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
-      .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
       .where(enabledModelChannelFilter())
       .groupBy(schema.tokenRoutes.id)
       .orderBy(desc(schema.tokenRoutes.id))
@@ -67,7 +66,6 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       .from(schema.tokenRoutes)
       .innerJoin(schema.routeChannels, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
-      .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
       .where(enabledModelChannelFilter())
       .groupBy(schema.tokenRoutes.id)
       .orderBy(desc(schema.tokenRoutes.id))
@@ -76,21 +74,21 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       .select({
         routeId: schema.routeChannels.routeId,
         enabled: schema.routeChannels.enabled,
-        siteName: schema.sites.name
+        accountName: schema.accounts.username,
+        upstreamUrl: schema.accounts.baseUrl
       })
       .from(schema.routeChannels)
       .innerJoin(schema.tokenRoutes, eq(schema.tokenRoutes.id, schema.routeChannels.routeId))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
-      .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
       .where(enabledModelChannelFilter())
       .all();
-    const summaryByRoute = new Map<number, { channelCount: number; enabledChannelCount: number; siteNames: Set<string> }>();
+    const summaryByRoute = new Map<number, { channelCount: number; enabledChannelCount: number; accountNames: Set<string> }>();
 
     for (const channel of channels) {
-      const summary = summaryByRoute.get(channel.routeId) || { channelCount: 0, enabledChannelCount: 0, siteNames: new Set<string>() };
+      const summary = summaryByRoute.get(channel.routeId) || { channelCount: 0, enabledChannelCount: 0, accountNames: new Set<string>() };
       summary.channelCount += 1;
       if (channel.enabled) summary.enabledChannelCount += 1;
-      summary.siteNames.add(channel.siteName);
+      summary.accountNames.add(channel.accountName || channel.upstreamUrl);
       summaryByRoute.set(channel.routeId, summary);
     }
 
@@ -100,7 +98,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
         ...route,
         channelCount: summary?.channelCount || 0,
         enabledChannelCount: summary?.enabledChannelCount || 0,
-        siteNames: summary ? [...summary.siteNames] : []
+        accountNames: summary ? [...summary.accountNames] : []
       };
     });
   });
@@ -124,7 +122,6 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       .from(schema.tokenRoutes)
       .innerJoin(schema.routeChannels, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
-      .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
       .where(activeAccountAnyChannelFilter())
       .groupBy(schema.tokenRoutes.id)
       .orderBy(desc(schema.tokenRoutes.id))
@@ -170,13 +167,13 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
         failCount: schema.routeChannels.failCount,
         cooldownUntil: schema.routeChannels.cooldownUntil,
         lastFailAt: schema.routeChannels.lastFailAt,
-        siteName: schema.sites.name,
-        accountName: schema.accounts.username
+        accountName: schema.accounts.username,
+        upstreamUrl: schema.accounts.baseUrl,
+        platform: schema.accounts.platform
       })
       .from(schema.routeChannels)
       .innerJoin(schema.tokenRoutes, eq(schema.tokenRoutes.id, schema.routeChannels.routeId))
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.routeChannels.accountId))
-      .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
       .where(and(eq(schema.routeChannels.routeId, params.id), activeAccountAnyChannelFilter()))
       .orderBy(schema.routeChannels.priority, desc(schema.routeChannels.weight))
       .all();
@@ -319,7 +316,6 @@ function activeAccountAnyChannelFilter() {
   // 通道抽屉需要展示停用通道，便于重新启用。
   return and(
     eq(schema.accounts.status, 'active'),
-    eq(schema.sites.status, 'active'),
     isNull(schema.routeChannels.tokenId)
   );
 }

@@ -1,5 +1,5 @@
 import { fetchJson, mergeCustomHeaders, normalizeBaseUrl, resolveOpenAiPath } from '../shared/http.js';
-import type { ApiTokenInfo, AuthenticatedInput, BalanceInfo, ModelDiscoveryInput, ModelInfo, PlatformAdapter, SitePlatform, VerifyTokenInput } from './types.js';
+import type { ApiTokenInfo, AuthenticatedInput, BalanceInfo, ModelDiscoveryInput, ModelInfo, PlatformAdapter, UpstreamPlatform, VerifyTokenInput } from './types.js';
 
 type ModelsPayload = {
   data?: Array<{
@@ -34,9 +34,9 @@ type TokenListPayload = {
 };
 
 export class OpenAiCompatibleAdapter implements PlatformAdapter {
-  readonly platformName: SitePlatform;
+  readonly platformName: UpstreamPlatform;
 
-  constructor(platformName: SitePlatform) {
+  constructor(platformName: UpstreamPlatform) {
     this.platformName = platformName;
   }
 
@@ -52,7 +52,7 @@ export class OpenAiCompatibleAdapter implements PlatformAdapter {
 
   async verifyToken(input: VerifyTokenInput) {
     const discoveryInput: ModelDiscoveryInput = {
-      siteId: input.siteId,
+      accountId: input.accountId,
       baseUrl: input.baseUrl,
       platform: input.platform,
       token: input.token,
@@ -211,7 +211,7 @@ function tokenInfoFromItem(item: unknown, index: number): ApiTokenInfo | null {
   return tokenInfo;
 }
 
-function supportsTokenList(platform: SitePlatform): boolean {
+function supportsTokenList(platform: UpstreamPlatform): boolean {
   return [
     'new-api',
     'one-api',

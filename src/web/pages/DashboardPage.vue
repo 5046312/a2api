@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { api, type ModelUsageItem, type SiteUsageItem, type StatsOverview } from '@web/api';
+import { api, type ModelUsageItem, type StatsOverview, type UpstreamUsageItem } from '@web/api';
 
 const overview = ref<StatsOverview | null>(null);
-const siteUsage = ref<SiteUsageItem[]>([]);
+const upstreamUsage = ref<UpstreamUsageItem[]>([]);
 const modelUsage = ref<ModelUsageItem[]>([]);
 const loading = ref(false);
 const error = ref('');
@@ -21,12 +21,12 @@ const cards = computed(() => {
     { label: '今日成功率', value: data ? formatPercent(data.todaySuccessRate) : '-' },
     { label: '今日用量', value: data ? formatInteger(data.todayTokens) : '-' },
     { label: '今日费用', value: data ? formatCost(data.todayCost) : '-' },
-    { label: '活跃上游数', value: data ? formatInteger(data.activeSiteCount) : '-' },
+    { label: '活跃上游账号', value: data ? formatInteger(data.activeAccountCount) : '-' },
     { label: '异常上游账号', value: data ? formatInteger(data.abnormalAccountCount) : '-' }
   ];
 });
 
-const recentSiteUsage = computed(() => siteUsage.value.slice(-12).reverse());
+const recentUpstreamUsage = computed(() => upstreamUsage.value.slice(-12).reverse());
 const topModelUsage = computed(() => modelUsage.value.slice().sort((left, right) => right.totalTokens - left.totalTokens).slice(0, 10));
 
 function setError(err: unknown) {
@@ -49,13 +49,13 @@ async function loadOverview() {
   loading.value = true;
   error.value = '';
   try {
-    const [overviewData, siteUsageData, modelUsageData] = await Promise.all([
+    const [overviewData, upstreamUsageData, modelUsageData] = await Promise.all([
       api.getStatsOverview(),
-      api.getSiteUsageStats({ range: '7d', bucket: 'day' }),
+      api.getUpstreamUsageStats({ range: '7d', bucket: 'day' }),
       api.getModelUsageStats({ range: '7d' })
     ]);
     overview.value = overviewData;
-    siteUsage.value = siteUsageData.items;
+    upstreamUsage.value = upstreamUsageData.items;
     modelUsage.value = modelUsageData.items;
   } catch (err) {
     setError(err);
@@ -98,14 +98,14 @@ onMounted(loadOverview);
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in recentSiteUsage" :key="`${item.bucket}-${item.siteId || 0}`">
+              <tr v-for="item in recentUpstreamUsage" :key="`${item.bucket}-${item.accountId || 0}`">
                 <td class="mono">{{ item.bucket }}</td>
-                <td>{{ item.siteName || '未知上游' }}</td>
+                <td>{{ item.accountName || item.upstreamUrl || '未知上游' }}</td>
                 <td>{{ formatInteger(item.requests) }}</td>
                 <td>{{ formatPercent(item.successRate) }}</td>
                 <td>{{ formatInteger(item.totalTokens) }}</td>
               </tr>
-              <tr v-if="!loading && recentSiteUsage.length === 0">
+              <tr v-if="!loading && recentUpstreamUsage.length === 0">
                 <td class="empty" colspan="5">暂无上游统计</td>
               </tr>
             </tbody>

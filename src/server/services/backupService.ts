@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema, sqlite } from '../db/index.js';
-import { parseJsonArray, parseJsonRecord, stringifyJson } from '../shared/json.js';
+import { parseJsonArray, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import { rebuildRoutes, type RouteRebuildResult } from './routeRefreshService.js';
 import { monitorSettingsPayloadSchema, updateMonitorSettings, type MonitorSettings } from './accountMonitorService.js';
@@ -22,9 +22,6 @@ const backupDocumentSchema = z.object({
 
 export type BackupType = z.infer<typeof backupTypeSchema>;
 
-type SiteRow = typeof schema.sites.$inferSelect;
-type SiteEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
-type SiteDisabledModelRow = typeof schema.siteDisabledModels.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type ModelAvailabilityRow = typeof schema.modelAvailability.$inferSelect;
@@ -36,12 +33,8 @@ type ProxyFileRow = typeof schema.proxyFiles.$inferSelect;
 type ProxyVideoTaskRow = typeof schema.proxyVideoTasks.$inferSelect;
 type AccountMonitorRow = typeof schema.accountMonitors.$inferSelect;
 type MonitorHeartbeatRow = typeof schema.monitorHeartbeats.$inferSelect;
-type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
 
 type BackupAccountsSection = {
-  sites: SiteRow[];
-  siteApiEndpoints: SiteEndpointRow[];
-  siteDisabledModels: SiteDisabledModelRow[];
   accounts: AccountRow[];
   accountTokens: AccountTokenRow[];
   modelAvailability: ModelAvailabilityRow[];
@@ -53,7 +46,6 @@ type BackupAccountsSection = {
   proxyVideoTasks: ProxyVideoTaskRow[];
   accountMonitors: AccountMonitorRow[];
   monitorHeartbeats: MonitorHeartbeatRow[];
-  siteAnnouncements: SiteAnnouncementRow[];
 };
 
 export type BackupDocument = {
@@ -74,14 +66,12 @@ export type BackupImportResult = {
     created: number;
     updated: number;
     skipped: number;
-    importedSites: number;
     importedAccounts: number;
     importedTokens: number;
     importedRoutes: number;
     importedDownstreamKeys: number;
     importedProxyFiles: number;
     importedProxyVideoTasks: number;
-    importedSiteAnnouncements: number;
     importedPreferences: number;
   };
   warnings: string[];
@@ -114,9 +104,6 @@ export function exportBackup(type: BackupType): BackupDocument {
 
   if (type === 'accounts' || type === 'all') {
     document.accounts = {
-      sites: db.select().from(schema.sites).all(),
-      siteApiEndpoints: db.select().from(schema.siteApiEndpoints).all(),
-      siteDisabledModels: db.select().from(schema.siteDisabledModels).all(),
       accounts: db.select().from(schema.accounts).all(),
       accountTokens: db.select().from(schema.accountTokens).all(),
       modelAvailability: db.select().from(schema.modelAvailability).all(),
@@ -127,8 +114,7 @@ export function exportBackup(type: BackupType): BackupDocument {
       proxyFiles: db.select().from(schema.proxyFiles).all(),
       proxyVideoTasks: db.select().from(schema.proxyVideoTasks).all(),
       accountMonitors: db.select().from(schema.accountMonitors).all(),
-      monitorHeartbeats: db.select().from(schema.monitorHeartbeats).all(),
-      siteAnnouncements: db.select().from(schema.siteAnnouncements).all()
+      monitorHeartbeats: db.select().from(schema.monitorHeartbeats).all()
     };
   }
 
@@ -186,14 +172,12 @@ function emptyImportResult(): BackupImportResult {
       created: 0,
       updated: 0,
       skipped: 0,
-      importedSites: 0,
       importedAccounts: 0,
       importedTokens: 0,
       importedRoutes: 0,
       importedDownstreamKeys: 0,
       importedProxyFiles: 0,
       importedProxyVideoTasks: 0,
-      importedSiteAnnouncements: 0,
       importedPreferences: 0
     },
     warnings: []
@@ -251,25 +235,19 @@ function importPreferences(preferences: Record<string, unknown>, summary: Import
 }
 
 function importAccountsSection(section: Record<string, unknown>, summary: ImportSummary, warnings: string[]): void {
-  const siteIdMap = new Map<number, number>();
   const accountIdMap = new Map<number, number>();
   const tokenIdMap = new Map<number, number>();
   const routeIdMap = new Map<number, number>();
   const channelIdMap = new Map<number, number>();
   const downstreamKeyIdMap = new Map<number, number>();
 
-  importSites(rows<SiteRow>(section, 'sites', warnings), siteIdMap, summary);
-  importSiteEndpoints(rows<SiteEndpointRow>(section, 'siteApiEndpoints', warnings), siteIdMap, summary, warnings);
-  importSiteDisabledModels(rows<SiteDisabledModelRow>(section, 'siteDisabledModels', warnings), siteIdMap, summary, warnings);
-  importSiteAnnouncements(rows<SiteAnnouncementRow>(section, 'siteAnnouncements', warnings), siteIdMap, summary, warnings);
-  importAccounts(rows<AccountRow>(section, 'accounts', warnings), siteIdMap, accountIdMap, summary, warnings);
+  importAccounts(rows<AccountRow>(section, 'accounts', warnings), accountIdMap, summary, warnings);
   importAccountTokens(rows<AccountTokenRow>(section, 'accountTokens', warnings), accountIdMap, tokenIdMap, summary, warnings);
   importModelAvailability(rows<ModelAvailabilityRow>(section, 'modelAvailability', warnings), accountIdMap, summary, warnings);
   importTokenModelAvailability(rows<TokenModelAvailabilityRow>(section, 'tokenModelAvailability', warnings), tokenIdMap, summary, warnings);
   importTokenRoutes(rows<TokenRouteRow>(section, 'tokenRoutes', warnings), routeIdMap, summary);
   importRouteChannels(rows<RouteChannelRow>(section, 'routeChannels', warnings), routeIdMap, accountIdMap, tokenIdMap, channelIdMap, summary, warnings);
   importDownstreamKeys(rows<DownstreamKeyRow>(section, 'downstreamApiKeys', warnings), {
-    siteIdMap,
     accountIdMap,
     tokenIdMap,
     routeIdMap,
@@ -281,130 +259,19 @@ function importAccountsSection(section: Record<string, unknown>, summary: Import
   importProxyVideoTasks(rows<ProxyVideoTaskRow>(section, 'proxyVideoTasks', warnings), accountIdMap, tokenIdMap, channelIdMap, summary, warnings);
 }
 
-function importSites(rowsToImport: SiteRow[], siteIdMap: Map<number, number>, summary: ImportSummary): void {
-  const now = nowIso();
-  for (const row of rowsToImport) {
-    const existing = db.select().from(schema.sites).where(and(eq(schema.sites.platform, row.platform), eq(schema.sites.url, row.url))).get();
-    if (existing) {
-      db.update(schema.sites)
-        .set({
-          name: row.name,
-          proxyUrl: row.proxyUrl,
-          useSystemProxy: row.useSystemProxy,
-          customHeaders: row.customHeaders,
-          isPinned: row.isPinned,
-          sortOrder: row.sortOrder,
-          globalWeight: row.globalWeight,
-          apiKey: row.apiKey,
-          updatedAt: now
-        })
-        .where(eq(schema.sites.id, existing.id))
-        .run();
-      siteIdMap.set(row.id, existing.id);
-      summary.updated += 1;
-    } else {
-      const inserted = db.insert(schema.sites).values(withoutId(row)).returning().get();
-      siteIdMap.set(row.id, inserted.id);
-      summary.created += 1;
-    }
-    summary.importedSites += 1;
-  }
-}
-
-function importSiteEndpoints(rowsToImport: SiteEndpointRow[], siteIdMap: Map<number, number>, summary: ImportSummary, warnings: string[]): void {
-  const now = nowIso();
-  for (const row of rowsToImport) {
-    const siteId = siteIdMap.get(row.siteId);
-    if (!siteId) {
-      skip(warnings, summary, `Site endpoint skipped, missing site #${row.siteId}`);
-      continue;
-    }
-    const existing = db.select().from(schema.siteApiEndpoints).where(and(eq(schema.siteApiEndpoints.siteId, siteId), eq(schema.siteApiEndpoints.url, row.url))).get();
-    if (existing) {
-      db.update(schema.siteApiEndpoints)
-        .set({
-          enabled: row.enabled,
-          sortOrder: row.sortOrder,
-          cooldownUntil: row.cooldownUntil,
-          lastSelectedAt: row.lastSelectedAt,
-          lastFailedAt: row.lastFailedAt,
-          lastFailureReason: row.lastFailureReason,
-          updatedAt: now
-        })
-        .where(eq(schema.siteApiEndpoints.id, existing.id))
-        .run();
-      summary.updated += 1;
-    } else {
-      db.insert(schema.siteApiEndpoints).values({ ...withoutId(row), siteId }).run();
-      summary.created += 1;
-    }
-  }
-}
-
-function importSiteDisabledModels(rowsToImport: SiteDisabledModelRow[], siteIdMap: Map<number, number>, summary: ImportSummary, warnings: string[]): void {
-  for (const row of rowsToImport) {
-    const siteId = siteIdMap.get(row.siteId);
-    if (!siteId) {
-      skip(warnings, summary, `Disabled model skipped, missing site #${row.siteId}`);
-      continue;
-    }
-    const existing = db.select().from(schema.siteDisabledModels).where(and(eq(schema.siteDisabledModels.siteId, siteId), eq(schema.siteDisabledModels.modelName, row.modelName))).get();
-    if (existing) {
-      summary.updated += 1;
-    } else {
-      db.insert(schema.siteDisabledModels).values({ siteId, modelName: row.modelName, createdAt: row.createdAt }).run();
-      summary.created += 1;
-    }
-  }
-}
-
-function importSiteAnnouncements(rowsToImport: SiteAnnouncementRow[], siteIdMap: Map<number, number>, summary: ImportSummary, warnings: string[]): void {
-  const now = nowIso();
-  for (const row of rowsToImport) {
-    const siteId = siteIdMap.get(row.siteId);
-    if (!siteId) {
-      skip(warnings, summary, `Site announcement skipped, missing site #${row.siteId}`);
-      continue;
-    }
-    const existing = db
-      .select()
-      .from(schema.siteAnnouncements)
-      .where(and(eq(schema.siteAnnouncements.siteId, siteId), eq(schema.siteAnnouncements.sourceKey, row.sourceKey)))
-      .get();
-    const values = {
-      ...withoutId(row),
-      siteId,
-      lastSeenAt: row.lastSeenAt || now
-    };
-    if (existing) {
-      db.update(schema.siteAnnouncements)
-        .set(values)
-        .where(eq(schema.siteAnnouncements.id, existing.id))
-        .run();
-      summary.updated += 1;
-    } else {
-      db.insert(schema.siteAnnouncements).values(values).run();
-      summary.created += 1;
-    }
-    summary.importedSiteAnnouncements += 1;
-  }
-}
-
 function importAccounts(
   rowsToImport: AccountRow[],
-  siteIdMap: Map<number, number>,
   accountIdMap: Map<number, number>,
   summary: ImportSummary,
   warnings: string[]
 ): void {
   const now = nowIso();
   for (const row of rowsToImport) {
-    const siteId = siteIdMap.get(row.siteId);
-    if (!siteId) {
-      skip(warnings, summary, `Account skipped, missing site #${row.siteId}`);
+    if (!row.baseUrl) {
+      skip(warnings, summary, `Account skipped, missing upstream: #${row.id}`);
       continue;
     }
-    const existing = db.select().from(schema.accounts).where(eq(schema.accounts.siteId, siteId)).all().find((item) => (
+    const existing = db.select().from(schema.accounts).where(and(eq(schema.accounts.baseUrl, row.baseUrl), eq(schema.accounts.platform, row.platform))).all().find((item) => (
       sameNullable(item.username, row.username)
       && item.credentialMode === row.credentialMode
       && sameNullable(item.oauthAccountKey, row.oauthAccountKey)
@@ -413,6 +280,11 @@ function importAccounts(
       db.update(schema.accounts)
         .set({
           username: row.username,
+          baseUrl: row.baseUrl,
+          platform: row.platform,
+          proxyUrl: row.proxyUrl,
+          useSystemProxy: row.useSystemProxy,
+          customHeaders: row.customHeaders,
           credentialMode: row.credentialMode,
           accessToken: row.accessToken,
           apiToken: row.apiToken,
@@ -435,7 +307,7 @@ function importAccounts(
       accountIdMap.set(row.id, existing.id);
       summary.updated += 1;
     } else {
-      const inserted = db.insert(schema.accounts).values({ ...withoutId(row), siteId }).returning().get();
+      const inserted = db.insert(schema.accounts).values(withoutId(row)).returning().get();
       accountIdMap.set(row.id, inserted.id);
       summary.created += 1;
     }
@@ -605,7 +477,6 @@ function importRouteChannels(
 function importDownstreamKeys(
   rowsToImport: DownstreamKeyRow[],
   input: {
-    siteIdMap: Map<number, number>;
     accountIdMap: Map<number, number>;
     tokenIdMap: Map<number, number>;
     routeIdMap: Map<number, number>;
@@ -625,11 +496,8 @@ function importDownstreamKeys(
       .values({
         ...withoutId(row),
         allowedRouteIds: stringifyJson(remapNumberArray(row.allowedRouteIds, input.routeIdMap)),
-        allowedSiteIds: stringifyJson(remapNumberArray(row.allowedSiteIds, input.siteIdMap)),
         allowedCredentialRefs: stringifyJson(remapCredentialRefs(row.allowedCredentialRefs, input)),
-        excludedSiteIds: stringifyJson(remapNumberArray(row.excludedSiteIds, input.siteIdMap)),
-        excludedCredentialRefs: stringifyJson(remapCredentialRefs(row.excludedCredentialRefs, input)),
-        siteWeightMultipliers: stringifyJson(remapSiteWeightMultipliers(row.siteWeightMultipliers, input.siteIdMap))
+        excludedCredentialRefs: stringifyJson(remapCredentialRefs(row.excludedCredentialRefs, input))
       })
       .returning()
       .get();
@@ -793,7 +661,6 @@ function remapNumberArray(value: string, idMap: Map<number, number>): number[] {
 function remapCredentialRefs(
   value: string,
   input: {
-    siteIdMap: Map<number, number>;
     accountIdMap: Map<number, number>;
     tokenIdMap: Map<number, number>;
   }
@@ -801,27 +668,14 @@ function remapCredentialRefs(
   const refs = parseJsonArray<CredentialRef>(value);
   const output: CredentialRef[] = [];
   for (const ref of refs) {
-    const siteId = input.siteIdMap.get(ref.siteId);
     const accountId = input.accountIdMap.get(ref.accountId);
-    if (!siteId || !accountId) continue;
+    if (!accountId) continue;
     if (ref.kind === 'account') {
-      output.push({ kind: 'account', siteId, accountId });
+      output.push({ kind: 'account', accountId });
       continue;
     }
     const tokenId = input.tokenIdMap.get(ref.tokenId);
-    if (tokenId) output.push({ kind: 'account_token', siteId, accountId, tokenId });
-  }
-  return output;
-}
-
-function remapSiteWeightMultipliers(value: string, siteIdMap: Map<number, number>): Record<string, number> {
-  const input = parseJsonRecord<number>(value);
-  const output: Record<string, number> = {};
-  for (const [siteIdText, multiplier] of Object.entries(input)) {
-    const nextSiteId = siteIdMap.get(Number(siteIdText));
-    if (nextSiteId && Number.isFinite(multiplier)) {
-      output[String(nextSiteId)] = multiplier;
-    }
+    if (tokenId) output.push({ kind: 'account_token', accountId, tokenId });
   }
   return output;
 }

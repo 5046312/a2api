@@ -83,7 +83,7 @@ export type RuntimeDatabaseState = {
   restartRequired: false;
 };
 
-const supportedSitePlatforms = [
+const supportedPlatforms = [
   'openai',
   'new-api',
   'one-api',
@@ -324,7 +324,7 @@ export function getSettings(): SettingsSnapshot {
 }
 
 export function getBrandList(): { brands: string[] } {
-  return { brands: supportedSitePlatforms };
+  return { brands: supportedPlatforms };
 }
 
 export function getRuntimeDatabaseState(): RuntimeDatabaseState {

@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, like, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { getAdapter, type SitePlatform } from '../adapters/index.js';
+import { getAdapter, type UpstreamPlatform } from '../adapters/index.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
@@ -46,14 +46,10 @@ type MonitorAccountRow = AccountMonitorRow & {
   accessToken: string | null;
   apiToken: string | null;
   accountStatus: string;
-  accountExtraConfig: string | null;
-  siteId: number;
-  siteName: string;
-  siteUrl: string;
-  sitePlatform: string;
-  siteStatus: string;
-  siteProxyUrl: string | null;
-  siteCustomHeaders: string | null;
+  baseUrl: string;
+  platform: string;
+  proxyUrl: string | null;
+  customHeaders: string | null;
 };
 
 type ProbeResult = {
@@ -121,7 +117,7 @@ export async function getMonitorOverview() {
   await syncAccountMonitors();
   const settings = getMonitorSettings();
   const monitors = await getMonitorRows();
-  const enabledRows = monitors.filter((row) => row.enabled && row.accountStatus === 'active' && row.siteStatus === 'active');
+  const enabledRows = monitors.filter((row) => row.enabled && row.accountStatus === 'active');
   const disabled = monitors.length - enabledRows.length;
   const statusCount = {
     up: enabledRows.filter((row) => row.status === 'up').length,
@@ -166,7 +162,6 @@ export async function listMonitorAccounts(query: {
   const totalRow = await db.select({ count: sql<number>`count(*)` })
     .from(schema.accountMonitors)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.accountMonitors.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(where)
     .get();
   const items = [];
@@ -307,15 +302,15 @@ async function probeAccount(row: MonitorAccountRow, timeoutSec: number): Promise
     };
   }
 
-  const adapter = getAdapter(row.sitePlatform);
+  const adapter = getAdapter(row.platform);
   const startedAt = Date.now();
   try {
     const models = await withTimeout(adapter.getModels({
-      siteId: row.siteId,
-      baseUrl: row.siteUrl,
-      platform: row.sitePlatform as SitePlatform,
-      proxyUrl: accountProxyUrl(row.accountExtraConfig) || row.siteProxyUrl,
-      customHeaders: parseJsonObject(row.siteCustomHeaders) as Record<string, string> | null,
+      accountId: row.accountId,
+      baseUrl: row.baseUrl,
+      platform: row.platform as UpstreamPlatform,
+      proxyUrl: row.proxyUrl,
+      customHeaders: parseJsonObject(row.customHeaders) as Record<string, string> | null,
       token,
       credentialMode: row.credentialMode === 'oauth' ? 'oauth' : 'apikey'
     }), timeoutSec);
@@ -379,7 +374,7 @@ async function markMonitorMaintenance(row: MonitorAccountRow) {
       status: 'maintenance',
       lastCheckAt: checkedAt,
       nextCheckAt: nextCheckIso(row),
-      lastMessage: '账号或站点已停用',
+      lastMessage: '账号已停用',
       updatedAt: checkedAt
     })
     .where(eq(schema.accountMonitors.id, row.id))
@@ -389,10 +384,10 @@ async function markMonitorMaintenance(row: MonitorAccountRow) {
     accountId: row.accountId,
     status: 'maintenance',
     checkedAt,
-    message: '账号或站点已停用',
+    message: '账号已停用',
     important: row.status !== 'maintenance'
   }).run();
-  return { accountId: row.accountId, status: 'maintenance' as const, checkedAt, latencyMs: null, message: '账号或站点已停用' };
+  return { accountId: row.accountId, status: 'maintenance' as const, checkedAt, latencyMs: null, message: '账号已停用' };
 }
 
 async function notifyStatusChange(row: MonitorAccountRow, previousStatus: MonitorStatus, nextStatus: MonitorStatus, message: string): Promise<void> {
@@ -404,7 +399,7 @@ async function notifyStatusChange(row: MonitorAccountRow, previousStatus: Monito
 
   const title = nextStatus === 'down' ? '账号监控故障' : '账号监控恢复';
   const level = nextStatus === 'down' ? 'error' : 'info';
-  const text = `${row.siteName} / ${row.username || `账号 ${row.accountId}`}: ${message}`;
+  const text = `${row.baseUrl} / ${row.username || `账号 ${row.accountId}`}: ${message}`;
   await db.insert(schema.events).values({
     type: 'monitor',
     title,
@@ -468,18 +463,13 @@ async function getMonitorRows(where?: SQL, limit = 10000, offset = 0): Promise<M
       accessToken: schema.accounts.accessToken,
       apiToken: schema.accounts.apiToken,
       accountStatus: schema.accounts.status,
-      accountExtraConfig: schema.accounts.extraConfig,
-      siteId: schema.sites.id,
-      siteName: schema.sites.name,
-      siteUrl: schema.sites.url,
-      sitePlatform: schema.sites.platform,
-      siteStatus: schema.sites.status,
-      siteProxyUrl: schema.sites.proxyUrl,
-      siteCustomHeaders: schema.sites.customHeaders
+      baseUrl: schema.accounts.baseUrl,
+      platform: schema.accounts.platform,
+      proxyUrl: schema.accounts.proxyUrl,
+      customHeaders: schema.accounts.customHeaders
     })
     .from(schema.accountMonitors)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.accountMonitors.accountId))
-    .innerJoin(schema.sites, eq(schema.sites.id, schema.accounts.siteId))
     .where(where)
     .orderBy(desc(schema.accountMonitors.status), desc(schema.accountMonitors.lastCheckAt), desc(schema.accountMonitors.id))
     .limit(limit)
@@ -492,7 +482,7 @@ function monitorListFilters(query: { status?: string; keyword?: string }): SQL[]
   const filters: SQL[] = [];
   if (query.status && query.status !== 'all') {
     if (query.status === 'disabled') {
-      const disabledWhere = or(eq(schema.accountMonitors.enabled, false), sql`${schema.accounts.status} != 'active'`, sql`${schema.sites.status} != 'active'`);
+      const disabledWhere = or(eq(schema.accountMonitors.enabled, false), sql`${schema.accounts.status} != 'active'`);
       if (disabledWhere) filters.push(disabledWhere);
     } else {
       filters.push(eq(schema.accountMonitors.status, query.status));
@@ -501,7 +491,7 @@ function monitorListFilters(query: { status?: string; keyword?: string }): SQL[]
   const keyword = query.keyword?.trim();
   if (keyword) {
     const pattern = `%${keyword}%`;
-    const keywordWhere = or(like(schema.accounts.username, pattern), like(schema.sites.name, pattern), like(schema.sites.url, pattern));
+    const keywordWhere = or(like(schema.accounts.username, pattern), like(schema.accounts.baseUrl, pattern));
     if (keywordWhere) filters.push(keywordWhere);
   }
   return filters;
@@ -514,11 +504,8 @@ function monitorAccountView(row: MonitorAccountRow) {
     accountId: row.accountId,
     accountName: row.username || `账号 ${row.accountId}`,
     accountStatus: row.accountStatus,
-    siteId: row.siteId,
-    siteName: row.siteName,
-    siteUrl: row.siteUrl,
-    sitePlatform: row.sitePlatform,
-    siteStatus: row.siteStatus,
+    upstreamUrl: row.baseUrl,
+    platform: row.platform,
     enabled: row.enabled,
     active,
     intervalSec: row.intervalSec,
@@ -530,7 +517,7 @@ function monitorAccountView(row: MonitorAccountRow) {
     consecutiveFailCount: row.consecutiveFailCount,
     consecutiveSuccessCount: row.consecutiveSuccessCount,
     latencyMs: row.latencyMs,
-    lastMessage: active ? row.lastMessage : '账号或站点已停用'
+    lastMessage: active ? row.lastMessage : '账号已停用'
   };
 }
 
@@ -591,19 +578,13 @@ function hoursAgo(hours: number): string {
 }
 
 function isMonitorActive(row: MonitorAccountRow): boolean {
-  return row.enabled && row.accountStatus === 'active' && row.siteStatus === 'active';
+  return row.enabled && row.accountStatus === 'active';
 }
 
 function nextCheckIso(row: MonitorAccountRow): string {
   const settings = getMonitorSettings();
   const intervalSec = row.intervalSec || settings.intervalSec;
   return new Date(Date.now() + intervalSec * 1000).toISOString();
-}
-
-function accountProxyUrl(extraConfig: string | null): string | null {
-  const parsed = parseJsonObject(extraConfig);
-  const value = parsed?.proxyUrl;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutSec: number): Promise<T> {

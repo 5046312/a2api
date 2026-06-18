@@ -5,55 +5,14 @@ export function runMigrations(): void {
   sqlite.exec(`
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS sites (
+CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  url TEXT NOT NULL,
-  platform TEXT NOT NULL,
+  username TEXT,
+  base_url TEXT NOT NULL DEFAULT '',
+  platform TEXT NOT NULL DEFAULT 'openai',
   proxy_url TEXT,
   use_system_proxy INTEGER NOT NULL DEFAULT 0,
   custom_headers TEXT,
-  status TEXT NOT NULL DEFAULT 'active',
-  is_pinned INTEGER NOT NULL DEFAULT 0,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  global_weight REAL NOT NULL DEFAULT 1,
-  api_key TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(platform, url)
-);
-CREATE INDEX IF NOT EXISTS sites_status_idx ON sites(status);
-
-CREATE TABLE IF NOT EXISTS site_api_endpoints (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  url TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  cooldown_until TEXT,
-  last_selected_at TEXT,
-  last_failed_at TEXT,
-  last_failure_reason TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(site_id, url)
-);
-CREATE INDEX IF NOT EXISTS site_api_endpoints_enabled_idx ON site_api_endpoints(site_id, enabled, sort_order);
-CREATE INDEX IF NOT EXISTS site_api_endpoints_cooldown_idx ON site_api_endpoints(site_id, cooldown_until);
-
-CREATE TABLE IF NOT EXISTS site_disabled_models (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  model_name TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE(site_id, model_name)
-);
-CREATE INDEX IF NOT EXISTS site_disabled_models_site_idx ON site_disabled_models(site_id);
-
-CREATE TABLE IF NOT EXISTS accounts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  username TEXT,
   credential_mode TEXT NOT NULL DEFAULT 'apikey',
   access_token TEXT,
   api_token TEXT,
@@ -73,9 +32,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS accounts_site_idx ON accounts(site_id);
+CREATE INDEX IF NOT EXISTS accounts_platform_idx ON accounts(platform);
 CREATE INDEX IF NOT EXISTS accounts_status_idx ON accounts(status);
-CREATE INDEX IF NOT EXISTS accounts_site_status_idx ON accounts(site_id, status);
+CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, status);
 
 CREATE TABLE IF NOT EXISTS account_tokens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,10 +155,7 @@ CREATE TABLE IF NOT EXISTS downstream_api_keys (
   model_scope TEXT NOT NULL DEFAULT 'selected',
   supported_models TEXT NOT NULL DEFAULT '[]',
   allowed_route_ids TEXT NOT NULL DEFAULT '[]',
-  allowed_site_ids TEXT NOT NULL DEFAULT '[]',
   allowed_credential_refs TEXT NOT NULL DEFAULT '[]',
-  site_weight_multipliers TEXT NOT NULL DEFAULT '{}',
-  excluded_site_ids TEXT NOT NULL DEFAULT '[]',
   excluded_credential_refs TEXT NOT NULL DEFAULT '[]',
   last_used_at TEXT,
   created_at TEXT NOT NULL,
@@ -249,8 +205,6 @@ CREATE TABLE IF NOT EXISTS proxy_debug_traces (
   selected_channel_id INTEGER,
   selected_route_id INTEGER,
   selected_account_id INTEGER,
-  selected_site_id INTEGER,
-  selected_site_platform TEXT,
   decision_summary_json TEXT,
   final_status TEXT,
   final_http_status INTEGER,
@@ -271,10 +225,7 @@ CREATE TABLE IF NOT EXISTS proxy_debug_attempts (
   channel_id INTEGER,
   route_id INTEGER,
   account_id INTEGER,
-  site_id INTEGER,
-  site_platform TEXT,
   model_actual TEXT,
-  endpoint_id INTEGER,
   endpoint TEXT NOT NULL,
   request_path TEXT NOT NULL,
   target_url TEXT NOT NULL,
@@ -313,7 +264,7 @@ CREATE TABLE IF NOT EXISTS proxy_video_tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   public_id TEXT NOT NULL,
   upstream_video_id TEXT NOT NULL,
-  site_url TEXT NOT NULL,
+  upstream_url TEXT NOT NULL,
   token_ref TEXT NOT NULL,
   requested_model TEXT,
   actual_model TEXT,
@@ -369,29 +320,6 @@ CREATE INDEX IF NOT EXISTS monitor_heartbeats_account_checked_idx ON monitor_hea
 CREATE INDEX IF NOT EXISTS monitor_heartbeats_status_checked_idx ON monitor_heartbeats(status, checked_at);
 CREATE INDEX IF NOT EXISTS monitor_heartbeats_important_idx ON monitor_heartbeats(important, checked_at);
 
-CREATE TABLE IF NOT EXISTS site_announcements (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  platform TEXT NOT NULL,
-  source_key TEXT NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  level TEXT NOT NULL DEFAULT 'info',
-  source_url TEXT,
-  starts_at TEXT,
-  ends_at TEXT,
-  upstream_created_at TEXT,
-  upstream_updated_at TEXT,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  read_at TEXT,
-  dismissed_at TEXT,
-  raw_payload TEXT,
-  UNIQUE(site_id, source_key)
-);
-CREATE INDEX IF NOT EXISTS site_announcements_site_first_seen_idx ON site_announcements(site_id, first_seen_at);
-CREATE INDEX IF NOT EXISTS site_announcements_read_idx ON site_announcements(read_at);
-
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -412,20 +340,77 @@ CREATE INDEX IF NOT EXISTS events_read_created_idx ON events(read, created_at);
 CREATE INDEX IF NOT EXISTS events_type_created_idx ON events(type, created_at);
 `);
 
+  ensureColumn('accounts', 'base_url', "ALTER TABLE accounts ADD COLUMN base_url TEXT NOT NULL DEFAULT ''");
+  ensureColumn('accounts', 'platform', "ALTER TABLE accounts ADD COLUMN platform TEXT NOT NULL DEFAULT 'openai'");
+  ensureColumn('accounts', 'proxy_url', 'ALTER TABLE accounts ADD COLUMN proxy_url TEXT');
+  ensureColumn('accounts', 'use_system_proxy', 'ALTER TABLE accounts ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('accounts', 'custom_headers', 'ALTER TABLE accounts ADD COLUMN custom_headers TEXT');
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'channel_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN channel_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'account_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN account_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'site_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN site_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'site_platform', 'ALTER TABLE proxy_debug_attempts ADD COLUMN site_platform TEXT');
   ensureColumn('proxy_debug_attempts', 'model_actual', 'ALTER TABLE proxy_debug_attempts ADD COLUMN model_actual TEXT');
-  ensureColumn('proxy_debug_attempts', 'endpoint_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN endpoint_id INTEGER');
+  ensureColumn('proxy_video_tasks', 'upstream_url', "ALTER TABLE proxy_video_tasks ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''");
+  migrateLegacySiteFieldsToAccounts();
+  migrateLegacyVideoTaskUpstreamUrl();
   migrateAccountApiKeysToInternalCredentials();
 }
 
 function ensureColumn(table: string, column: string, statement: string): void {
+  if (!tableExists(table)) return;
   const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!rows.some((row) => row.name === column)) sqlite.exec(statement);
+}
+
+function tableExists(table: string): boolean {
+  const row = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as { name: string } | undefined;
+  return !!row;
+}
+
+function columnExists(table: string, column: string): boolean {
+  if (!tableExists(table)) return false;
+  const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}
+
+function migrateLegacySiteFieldsToAccounts(): void {
+  if (!tableExists('sites') || !columnExists('accounts', 'site_id')) return;
+  // 旧版本的上游地址存在 sites 表；升级后只回填到 accounts，不再保留站点运行时依赖。
+  sqlite.exec(`
+UPDATE accounts
+SET
+  base_url = COALESCE(NULLIF(base_url, ''), (
+    SELECT sites.url FROM sites WHERE sites.id = accounts.site_id
+  ), ''),
+  platform = COALESCE((
+    SELECT sites.platform FROM sites WHERE sites.id = accounts.site_id
+  ), 'openai'),
+  proxy_url = COALESCE(proxy_url, (
+    SELECT sites.proxy_url FROM sites WHERE sites.id = accounts.site_id
+  )),
+  use_system_proxy = COALESCE((
+    SELECT sites.use_system_proxy FROM sites WHERE sites.id = accounts.site_id
+  ), 0),
+  custom_headers = COALESCE(custom_headers, (
+    SELECT sites.custom_headers FROM sites WHERE sites.id = accounts.site_id
+  ))
+WHERE EXISTS (
+  SELECT 1 FROM sites WHERE sites.id = accounts.site_id
+);
+`);
+}
+
+function migrateLegacyVideoTaskUpstreamUrl(): void {
+  if (!columnExists('proxy_video_tasks', 'site_url') || !columnExists('proxy_video_tasks', 'upstream_url')) return;
+  sqlite.exec(`
+UPDATE proxy_video_tasks
+SET upstream_url = site_url
+WHERE (upstream_url IS NULL OR trim(upstream_url) = '')
+  AND site_url IS NOT NULL
+  AND trim(site_url) != '';
+`);
 }
 
 function migrateAccountApiKeysToInternalCredentials(): void {

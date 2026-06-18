@@ -26,12 +26,10 @@ type DownstreamKeyPolicyError = Extract<DownstreamKeyPolicyResult, { ok: false }
 const credentialRefSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('account'),
-    siteId: z.number().int().positive(),
     accountId: z.number().int().positive()
   }),
   z.object({
     kind: z.literal('account_token'),
-    siteId: z.number().int().positive(),
     accountId: z.number().int().positive(),
     tokenId: z.number().int().positive()
   })
@@ -47,10 +45,7 @@ export const downstreamKeyPayloadSchema = z.object({
   modelScope: z.enum(['all', 'selected']).default('selected'),
   supportedModels: z.array(z.string()).default([]),
   allowedRouteIds: z.array(z.number().int()).default([]),
-  allowedSiteIds: z.array(z.number().int()).default([]),
   allowedCredentialRefs: z.array(credentialRefSchema).default([]),
-  siteWeightMultipliers: z.record(z.string(), z.number()).default({}),
-  excludedSiteIds: z.array(z.number().int()).default([]),
   excludedCredentialRefs: z.array(credentialRefSchema).default([])
 });
 
@@ -77,10 +72,7 @@ export type DownstreamKeyView = {
   modelScope: 'all' | 'selected';
   supportedModels: string[];
   allowedRouteIds: number[];
-  allowedSiteIds: number[];
   allowedCredentialRefs: CredentialRef[];
-  siteWeightMultipliers: Record<string, number>;
-  excludedSiteIds: number[];
   excludedCredentialRefs: CredentialRef[];
   lastUsedAt: string | null;
   createdAt: string;
@@ -114,10 +106,7 @@ export function toDownstreamKeyView(row: DownstreamKeyRow, includeKey = false): 
     modelScope: row.modelScope === 'all' ? 'all' : 'selected',
     supportedModels: parseJsonArray<string>(row.supportedModels),
     allowedRouteIds: parseJsonArray<number>(row.allowedRouteIds),
-    allowedSiteIds: parseJsonArray<number>(row.allowedSiteIds),
     allowedCredentialRefs: parseJsonArray<CredentialRef>(row.allowedCredentialRefs),
-    siteWeightMultipliers: parseJsonRecord<number>(row.siteWeightMultipliers),
-    excludedSiteIds: parseJsonArray<number>(row.excludedSiteIds),
     excludedCredentialRefs: parseJsonArray<CredentialRef>(row.excludedCredentialRefs),
     lastUsedAt: row.lastUsedAt,
     createdAt: row.createdAt,
@@ -174,10 +163,7 @@ export async function createDownstreamKey(payload: DownstreamKeyPayload): Promis
       modelScope: payload.modelScope,
       supportedModels: stringifyJson(payload.supportedModels),
       allowedRouteIds: stringifyJson(payload.allowedRouteIds),
-      allowedSiteIds: stringifyJson(payload.allowedSiteIds),
       allowedCredentialRefs: stringifyJson(payload.allowedCredentialRefs),
-      siteWeightMultipliers: stringifyJson(payload.siteWeightMultipliers),
-      excludedSiteIds: stringifyJson(payload.excludedSiteIds),
       excludedCredentialRefs: stringifyJson(payload.excludedCredentialRefs),
       createdAt: now,
       updatedAt: now
@@ -202,10 +188,7 @@ export async function updateDownstreamKey(id: number, payload: Partial<Downstrea
       modelScope: payload.modelScope ?? current.modelScope,
       supportedModels: payload.supportedModels ? stringifyJson(payload.supportedModels) : current.supportedModels,
       allowedRouteIds: payload.allowedRouteIds ? stringifyJson(payload.allowedRouteIds) : current.allowedRouteIds,
-      allowedSiteIds: payload.allowedSiteIds ? stringifyJson(payload.allowedSiteIds) : current.allowedSiteIds,
       allowedCredentialRefs: payload.allowedCredentialRefs ? stringifyJson(payload.allowedCredentialRefs) : current.allowedCredentialRefs,
-      siteWeightMultipliers: payload.siteWeightMultipliers ? stringifyJson(payload.siteWeightMultipliers) : current.siteWeightMultipliers,
-      excludedSiteIds: payload.excludedSiteIds ? stringifyJson(payload.excludedSiteIds) : current.excludedSiteIds,
       excludedCredentialRefs: payload.excludedCredentialRefs ? stringifyJson(payload.excludedCredentialRefs) : current.excludedCredentialRefs,
       updatedAt: nowIso()
     })
@@ -322,10 +305,7 @@ function toDownstreamRoutingPolicy(view: DownstreamKeyView): DownstreamRoutingPo
     modelScope: view.modelScope,
     supportedModels: view.supportedModels,
     allowedRouteIds: view.allowedRouteIds,
-    allowedSiteIds: view.allowedSiteIds,
     allowedCredentialRefs: view.allowedCredentialRefs,
-    siteWeightMultipliers: view.siteWeightMultipliers,
-    excludedSiteIds: view.excludedSiteIds,
     excludedCredentialRefs: view.excludedCredentialRefs
   };
 }

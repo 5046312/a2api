@@ -23,7 +23,6 @@ const connectionStatusPayloadSchema = z.object({ enabled: z.boolean() });
 const providerParamsSchema = z.object({ provider: z.enum(['codex', 'claude', 'gemini-cli', 'antigravity']) });
 const sessionParamsSchema = z.object({ state: z.string().trim().min(1) });
 const sessionStartPayloadSchema = z.object({
-  siteId: z.coerce.number().int().positive().optional().nullable(),
   projectId: z.string().trim().optional().nullable(),
   proxyUrl: z.string().trim().optional().nullable(),
   callbackBaseUrl: z.string().trim().optional().nullable()

@@ -11,12 +11,6 @@ import {
   type RecordProxyDebugAttemptInput
 } from '../../services/proxyDebugTraceService.js';
 import { createPendingProxyLog, finalizeProxyLog } from '../../services/proxyLogService.js';
-import {
-  recordSiteApiEndpointFailure,
-  recordSiteApiEndpointSuccess,
-  selectSiteApiEndpointTarget,
-  type SiteApiEndpointTarget
-} from '../../services/siteApiEndpointService.js';
 import { recordChannelFailure, recordChannelSuccess, selectChannel, type SelectedChannel } from '../../services/tokenRouter.js';
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicy.js';
 import { fetchDispatcher, mergeCustomHeaders, resolveOpenAiPath, safeHeaders } from '../../shared/http.js';
@@ -221,144 +215,66 @@ async function callUpstreamChat(input: {
     options: input.options,
     contentType
   });
-  const excludedEndpointIds: number[] = [];
-  let lastEndpointError = 'No available site endpoint';
+  const url = resolveOpenAiPath(input.selected.baseUrl, input.options.upstreamPath);
+  const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
+  let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+  const attemptRecord = buildAttemptRecordInput(
+    { ...input, attemptIndex: input.takeAttemptIndex() },
+    url,
+    headers
+  );
 
-  while (true) {
-    const target = await selectSiteApiEndpointTarget(input.selected.siteId, input.selected.siteUrl, excludedEndpointIds);
-    if (!target) {
-      const error = lastEndpointError;
-      await recordChannelFailure(input.selected.channelId, error);
-      return { done: false, error };
-    }
-
-    const url = resolveOpenAiPath(target.baseUrl, input.options.upstreamPath);
-    const controller = config.proxyFirstByteTimeoutSec > 0 ? new AbortController() : null;
-    let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
-    const attemptRecord = buildAttemptRecordInput(
-      { ...input, attemptIndex: input.takeAttemptIndex() },
-      target,
-      url,
+  try {
+    const dispatcher = fetchDispatcher(input.selected.proxyUrl);
+    const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
+      method: 'POST',
       headers
-    );
+    };
+    if (upstreamRequest.body !== undefined) fetchOptions.body = upstreamRequest.body;
+    if (dispatcher) fetchOptions.dispatcher = dispatcher;
+    if (controller) {
+      fetchOptions.signal = controller.signal;
+      firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
+    }
+    await recordProxyDebugAttempt(attemptRecord);
+    const response = await fetch(url, fetchOptions);
+    if (firstByteTimer) clearTimeout(firstByteTimer);
 
-    try {
-      const dispatcher = fetchDispatcher(input.selected.proxyUrl);
-      const fetchOptions: NonNullable<Parameters<typeof fetch>[1]> = {
-        method: 'POST',
-        headers
-      };
-      if (upstreamRequest.body !== undefined) fetchOptions.body = upstreamRequest.body;
-      if (dispatcher) fetchOptions.dispatcher = dispatcher;
-      if (controller) {
-        fetchOptions.signal = controller.signal;
-        firstByteTimer = setTimeout(() => controller.abort(), config.proxyFirstByteTimeoutSec * 1000);
-      }
-      await recordProxyDebugAttempt(attemptRecord);
-      const response = await fetch(url, fetchOptions);
-      if (firstByteTimer) clearTimeout(firstByteTimer);
-
-      if (!response.ok) {
-        const text = await response.text();
-        const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
-        // 配额、限流等业务错误命中规则后，临时冷却当前通道并交给外层继续尝试下一通道。
-        const temporaryDisableMatch = matchTemporaryDisableRule(response.status, text);
-        const temporaryDisableUntil = temporaryDisableMatch
-          ? new Date(Date.now() + temporaryDisableMatch.rule.durationMinutes * 60_000).toISOString()
-          : null;
-        const temporaryDisableReason = temporaryDisableMatch && temporaryDisableUntil
-          ? buildTemporaryDisableReason(error, temporaryDisableMatch, temporaryDisableUntil)
-          : null;
-        lastEndpointError = error;
-        const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { status: response.status, message: error });
-        await recordProxyDebugAttempt({
-          ...attemptRecord,
-          responseStatus: response.status,
-          responseHeaders: headersToRecord(response.headers),
-          rawErrorText: temporaryDisableReason ?? error
-        });
-        if (temporaryDisableMatch && temporaryDisableUntil && temporaryDisableReason) {
-          await recordChannelFailure(input.selected.channelId, temporaryDisableReason, {
-            cooldownUntil: temporaryDisableUntil,
-            eventTitle: '上游通道临时禁用',
-            eventLevel: 'warning'
-          });
-          return { done: false, error: temporaryDisableReason };
-        }
-        if (endpointFailure.retryable && target.endpointId !== null) {
-          excludedEndpointIds.push(target.endpointId);
-          continue;
-        }
-        await recordChannelFailure(input.selected.channelId, error);
-        if (isRetryableUpstreamStatus(response.status)) {
-          return { done: false, error };
-        }
-        await finalizeProxyDebugTrace(input.traceId, {
-          selectedChannelId: input.selected.channelId,
-          selectedRouteId: input.selected.routeId,
-          selectedAccountId: input.selected.accountId,
-          selectedSiteId: input.selected.siteId,
-          selectedSitePlatform: input.selected.sitePlatform,
-          decisionSummary: { error, retryCount: input.retryCount },
-          finalStatus: 'failed',
-          finalHttpStatus: response.status,
-          finalUpstreamPath: url,
-          finalResponseHeaders: headersToRecord(response.headers)
-        });
-        await finalizeProxyLog({
-          id: input.logId,
-          debugTraceId: input.traceId,
-          routeId: input.selected.routeId,
-          channelId: input.selected.channelId,
-          accountId: input.selected.accountId,
-          downstreamApiKeyId: input.downstreamApiKeyId,
-          modelRequested: input.selected.requestedModel,
-          modelActual: input.selected.sourceModel,
-          status: 'failed',
-          httpStatus: response.status,
-          isStream: input.body.stream ?? false,
-          latencyMs: Date.now() - input.startedAt,
-          errorMessage: error,
-          retryCount: input.retryCount
-        });
-        return {
-          done: true,
-          response: sendError(input.reply, upstreamStatusToClientStatus(response.status), 'upstream_error', error, 'upstream_error')
-        };
-      }
-
-      if (input.body.stream) {
-        await streamUpstreamResponse(input.reply, response, {
-          ...input,
-          endpointTarget: target,
-          targetUrl: url,
-          attemptRecord
-        });
-        return { done: true, response: input.reply };
-      }
-
-      const upstreamPayload = await response.json() as Record<string, unknown>;
-      const usage = extractUsage(upstreamPayload);
-      const payload = input.options.transformPayload ? input.options.transformPayload(upstreamPayload) : upstreamPayload;
+    if (!response.ok) {
+      const text = await response.text();
+      const error = `Upstream ${response.status}: ${text.slice(0, 500)}`;
+      // 配额、限流等业务错误命中规则后，临时冷却当前通道并交给外层继续尝试下一通道。
+      const temporaryDisableMatch = matchTemporaryDisableRule(response.status, text);
+      const temporaryDisableUntil = temporaryDisableMatch
+        ? new Date(Date.now() + temporaryDisableMatch.rule.durationMinutes * 60_000).toISOString()
+        : null;
+      const temporaryDisableReason = temporaryDisableMatch && temporaryDisableUntil
+        ? buildTemporaryDisableReason(error, temporaryDisableMatch, temporaryDisableUntil)
+        : null;
       await recordProxyDebugAttempt({
         ...attemptRecord,
         responseStatus: response.status,
-        responseHeaders: headersToRecord(response.headers)
+        responseHeaders: headersToRecord(response.headers),
+        rawErrorText: temporaryDisableReason ?? error
       });
-      const estimatedCost = estimateUsageCost(usage.totalTokens, input.selected.accountUnitCost);
-      await recordSiteApiEndpointSuccess(target.endpointId);
-      await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
-      if (input.downstreamApiKeyId !== null) {
-        await recordManagedKeyCostUsage(input.downstreamApiKeyId, estimatedCost);
+      if (temporaryDisableMatch && temporaryDisableUntil && temporaryDisableReason) {
+        await recordChannelFailure(input.selected.channelId, temporaryDisableReason, {
+          cooldownUntil: temporaryDisableUntil,
+          eventTitle: '上游通道临时禁用',
+          eventLevel: 'warning'
+        });
+        return { done: false, error: temporaryDisableReason };
+      }
+      await recordChannelFailure(input.selected.channelId, error);
+      if (isRetryableUpstreamStatus(response.status)) {
+        return { done: false, error };
       }
       await finalizeProxyDebugTrace(input.traceId, {
         selectedChannelId: input.selected.channelId,
         selectedRouteId: input.selected.routeId,
         selectedAccountId: input.selected.accountId,
-        selectedSiteId: input.selected.siteId,
-        selectedSitePlatform: input.selected.sitePlatform,
-        decisionSummary: { usage, retryCount: input.retryCount },
-        finalStatus: 'success',
+        decisionSummary: { error, retryCount: input.retryCount },
+        finalStatus: 'failed',
         finalHttpStatus: response.status,
         finalUpstreamPath: url,
         finalResponseHeaders: headersToRecord(response.headers)
@@ -372,41 +288,88 @@ async function callUpstreamChat(input: {
         downstreamApiKeyId: input.downstreamApiKeyId,
         modelRequested: input.selected.requestedModel,
         modelActual: input.selected.sourceModel,
-        status: 'success',
+        status: 'failed',
         httpStatus: response.status,
-        isStream: false,
+        isStream: input.body.stream ?? false,
         latencyMs: Date.now() - input.startedAt,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        totalTokens: usage.totalTokens,
-        estimatedCost,
+        errorMessage: error,
         retryCount: input.retryCount
       });
-      if (input.runtimeOptions.includeDebugTraceId) payload.a2apiDebugTraceId = input.traceId;
-      return { done: true, response: input.reply.code(response.status).send(payload) };
-    } catch (error) {
-      if (firstByteTimer) clearTimeout(firstByteTimer);
-      const timeoutMessage = config.proxyFirstByteTimeoutSec > 0
-        ? `First byte timeout after ${config.proxyFirstByteTimeoutSec}s`
-        : null;
-      const message = error instanceof Error && error.name === 'AbortError' && timeoutMessage
-        ? timeoutMessage
-        : error instanceof Error
-          ? error.message
-          : 'Network error';
-      lastEndpointError = message;
-      const endpointFailure = await recordSiteApiEndpointFailure(target.endpointId, { message });
+      return {
+        done: true,
+        response: sendError(input.reply, upstreamStatusToClientStatus(response.status), 'upstream_error', error, 'upstream_error')
+      };
+    }
+
+    if (input.body.stream) {
+      await streamUpstreamResponse(input.reply, response, {
+        ...input,
+        targetUrl: url,
+        attemptRecord
+      });
+      return { done: true, response: input.reply };
+    }
+
+    const upstreamPayload = await response.json() as Record<string, unknown>;
+    const usage = extractUsage(upstreamPayload);
+    const payload = input.options.transformPayload ? input.options.transformPayload(upstreamPayload) : upstreamPayload;
+    await recordProxyDebugAttempt({
+      ...attemptRecord,
+      responseStatus: response.status,
+      responseHeaders: headersToRecord(response.headers)
+    });
+    const estimatedCost = estimateUsageCost(usage.totalTokens, input.selected.accountUnitCost);
+    await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
+    if (input.downstreamApiKeyId !== null) {
+      await recordManagedKeyCostUsage(input.downstreamApiKeyId, estimatedCost);
+    }
+    await finalizeProxyDebugTrace(input.traceId, {
+      selectedChannelId: input.selected.channelId,
+      selectedRouteId: input.selected.routeId,
+      selectedAccountId: input.selected.accountId,
+      decisionSummary: { usage, retryCount: input.retryCount },
+      finalStatus: 'success',
+      finalHttpStatus: response.status,
+      finalUpstreamPath: url,
+      finalResponseHeaders: headersToRecord(response.headers)
+    });
+    await finalizeProxyLog({
+      id: input.logId,
+      debugTraceId: input.traceId,
+      routeId: input.selected.routeId,
+      channelId: input.selected.channelId,
+      accountId: input.selected.accountId,
+      downstreamApiKeyId: input.downstreamApiKeyId,
+      modelRequested: input.selected.requestedModel,
+      modelActual: input.selected.sourceModel,
+      status: 'success',
+      httpStatus: response.status,
+      isStream: false,
+      latencyMs: Date.now() - input.startedAt,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      estimatedCost,
+      retryCount: input.retryCount
+    });
+    if (input.runtimeOptions.includeDebugTraceId) payload.a2apiDebugTraceId = input.traceId;
+    return { done: true, response: input.reply.code(response.status).send(payload) };
+  } catch (error) {
+    if (firstByteTimer) clearTimeout(firstByteTimer);
+    const timeoutMessage = config.proxyFirstByteTimeoutSec > 0
+      ? `First byte timeout after ${config.proxyFirstByteTimeoutSec}s`
+      : null;
+    const message = error instanceof Error && error.name === 'AbortError' && timeoutMessage
+      ? timeoutMessage
+      : error instanceof Error
+        ? error.message
+        : 'Network error';
       await recordProxyDebugAttempt({
         ...attemptRecord,
         rawErrorText: message
       });
-      if (endpointFailure.retryable && target.endpointId !== null) {
-        excludedEndpointIds.push(target.endpointId);
-        continue;
-      }
-      await recordChannelFailure(input.selected.channelId, message);
-      return { done: false, error: message };
-    }
+    await recordChannelFailure(input.selected.channelId, message);
+    return { done: false, error: message };
   }
 }
 
@@ -420,7 +383,6 @@ async function streamUpstreamResponse(
     traceId: number;
     logId: number;
     startedAt: number;
-    endpointTarget: SiteApiEndpointTarget;
     targetUrl: string;
     attemptRecord: RecordProxyDebugAttemptInput;
     options: OpenAiProxyEndpointOptions;
@@ -456,7 +418,6 @@ async function streamUpstreamResponse(
       responseStatus: response.status,
       responseHeaders: headersToRecord(response.headers)
     });
-    await recordSiteApiEndpointSuccess(input.endpointTarget.endpointId);
     await recordChannelSuccess(input.selected.channelId, Date.now() - input.startedAt, estimatedCost);
     if (input.downstreamApiKeyId !== null) {
       await recordManagedKeyCostUsage(input.downstreamApiKeyId, estimatedCost);
@@ -465,8 +426,6 @@ async function streamUpstreamResponse(
       selectedChannelId: input.selected.channelId,
       selectedRouteId: input.selected.routeId,
       selectedAccountId: input.selected.accountId,
-      selectedSiteId: input.selected.siteId,
-      selectedSitePlatform: input.selected.sitePlatform,
       decisionSummary: { usage: streamUsage, retryCount: input.retryCount },
       finalStatus: 'success',
       finalHttpStatus: response.status,
@@ -497,7 +456,6 @@ async function streamUpstreamResponse(
     const message = error instanceof Error ? error.message : 'Stream failed';
     const finalMessage = formatStreamStartedFailure(message);
     reply.raw.destroy();
-    await recordSiteApiEndpointFailure(input.endpointTarget.endpointId, { message });
     await recordChannelFailure(input.selected.channelId, message);
     await recordProxyDebugAttempt({
       ...input.attemptRecord,
@@ -509,8 +467,6 @@ async function streamUpstreamResponse(
       selectedChannelId: input.selected.channelId,
       selectedRouteId: input.selected.routeId,
       selectedAccountId: input.selected.accountId,
-      selectedSiteId: input.selected.siteId,
-      selectedSitePlatform: input.selected.sitePlatform,
       decisionSummary: { error: finalMessage, retryCount: input.retryCount, streamStarted: true },
       finalStatus: 'failed',
       finalHttpStatus: response.status,
@@ -537,12 +493,6 @@ async function streamUpstreamResponse(
   }
 }
 
-function formatEndpointName(selected: SelectedChannel, target: SiteApiEndpointTarget): string {
-  return target.endpointId === null
-    ? selected.siteName
-    : `${selected.siteName}#${target.endpointId}`;
-}
-
 function buildAttemptRecordInput(
   input: {
     selected: SelectedChannel;
@@ -550,7 +500,6 @@ function buildAttemptRecordInput(
     attemptIndex: number;
     options: OpenAiProxyEndpointOptions;
   },
-  target: SiteApiEndpointTarget,
   targetUrl: string,
   requestHeaders: Record<string, string>
 ): RecordProxyDebugAttemptInput {
@@ -560,15 +509,16 @@ function buildAttemptRecordInput(
     channelId: input.selected.channelId,
     routeId: input.selected.routeId,
     accountId: input.selected.accountId,
-    siteId: input.selected.siteId,
-    sitePlatform: input.selected.sitePlatform,
     modelActual: input.selected.sourceModel,
-    endpointId: target.endpointId,
-    endpoint: formatEndpointName(input.selected, target),
+    endpoint: formatAccountEndpointName(input.selected),
     requestPath: input.options.upstreamPath,
     targetUrl,
     requestHeaders
   };
+}
+
+function formatAccountEndpointName(selected: SelectedChannel): string {
+  return selected.accountName ? `${selected.accountName}#${selected.accountId}` : `account#${selected.accountId}`;
 }
 
 function isRetryableUpstreamStatus(status: number): boolean {
