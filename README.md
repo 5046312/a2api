@@ -26,7 +26,7 @@ P0 implemented:
 - Dedicated platform adapters for OneHub, DoneHub, Veloera, AnyRouter, CliProxyAPI, and Claude model discovery.
 - Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
 - Scheduled proxy log cleanup controlled by cron and retention days.
-- Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables.
+- Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables and range-based reset.
 - Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
 - Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
 - Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, and channel attempt fields.

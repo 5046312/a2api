@@ -21,6 +21,9 @@ const logsPage = ref(1);
 const logsTotal = ref(0);
 const tracesPage = ref(1);
 const tracesTotal = ref(0);
+const cleanupModalVisible = ref(false);
+const cleanupRange = ref<[number, number] | null>(null);
+const cleanupLoading = ref(false);
 const filters = reactive({
   requestId: '',
   status: '',
@@ -51,6 +54,13 @@ const logTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   second: '2-digit',
   hour12: false
 });
+const cleanupShortcutOptions = [
+  { label: '最近 1 小时', getRange: () => rangeFromNow(60 * 60 * 1000) },
+  { label: '今天', getRange: todayRange },
+  { label: '最近 24 小时', getRange: () => rangeFromNow(24 * 60 * 60 * 1000) },
+  { label: '最近 7 天', getRange: () => rangeFromNow(7 * 24 * 60 * 60 * 1000) },
+  { label: '最近 30 天', getRange: () => rangeFromNow(30 * 24 * 60 * 60 * 1000) }
+];
 watch(error, (value) => {
   if (value) notice.error(value);
 });
@@ -70,6 +80,7 @@ const detailDrawerTitle = computed(() => {
   if (selectedTrace.value) return `Debug Trace #${selectedTrace.value.id}`;
   return '详情';
 });
+const cleanupConfirmDisabled = computed(() => !cleanupRange.value || cleanupRange.value.length !== 2 || cleanupLoading.value);
 
 function setError(err: unknown, fallback: string) {
   error.value = err instanceof Error ? err.message : fallback;
@@ -138,6 +149,58 @@ function logStatusTagType(status: string) {
 function clearDetailSelection() {
   selectedLog.value = null;
   selectedTrace.value = null;
+}
+
+function rangeFromNow(durationMs: number): [number, number] {
+  const end = Date.now();
+  return [end - durationMs, end];
+}
+
+function todayRange(): [number, number] {
+  const end = new Date();
+  const start = new Date(end);
+  start.setHours(0, 0, 0, 0);
+  return [start.getTime(), end.getTime()];
+}
+
+function setCleanupShortcut(getRange: () => [number, number]) {
+  cleanupRange.value = getRange();
+}
+
+function openCleanupModal() {
+  error.value = '';
+  cleanupRange.value = null;
+  cleanupModalVisible.value = true;
+}
+
+function resolveCleanupIsoRange() {
+  if (!cleanupRange.value || cleanupRange.value.length !== 2) return null;
+  const [fromMs, toMs] = cleanupRange.value;
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) return null;
+  return {
+    from: new Date(fromMs).toISOString(),
+    to: new Date(toMs).toISOString()
+  };
+}
+
+async function confirmClearProxyLogs() {
+  const range = resolveCleanupIsoRange();
+  if (!range) {
+    notice.error('请选择有效的清空时间范围');
+    return;
+  }
+  cleanupLoading.value = true;
+  error.value = '';
+  try {
+    const result = await api.clearProxyLogs(range);
+    notice.success(`已清空 ${result.deletedProxyLogs} 条请求记录`);
+    cleanupModalVisible.value = false;
+    await reloadAll();
+  } catch (err) {
+    setError(err, '清空请求记录失败');
+  } finally {
+    cleanupLoading.value = false;
+  }
 }
 
 async function loadPage() {
@@ -287,7 +350,10 @@ onMounted(loadPage);
               <h2>代理日志</h2>
               <p class="muted">查看 `/v1/*` 请求模型选择结果和错误。</p>
             </div>
-            <n-button secondary attr-type="button" @click="loadLogs">刷新</n-button>
+            <div class="actions">
+              <n-button secondary attr-type="button" @click="loadLogs">刷新</n-button>
+              <n-button secondary type="error" attr-type="button" @click="openCleanupModal">重置</n-button>
+            </div>
           </div>
           <div class="table-wrap">
             <n-table size="small" :bordered="false" single-line class="admin-table">
@@ -402,6 +468,52 @@ onMounted(loadPage);
         </n-tab-pane>
       </n-tabs>
     </n-card>
+
+    <n-modal
+      v-model:show="cleanupModalVisible"
+      preset="card"
+      title="清空请求记录"
+      :bordered="false"
+      style="width: min(560px, calc(100vw - 32px))"
+    >
+      <div class="cleanup-panel">
+        <p class="muted">请选择要清空的请求记录时间范围，确认后会同步删除关联 Debug Trace。</p>
+        <div class="shortcut-row">
+          <n-button
+            v-for="item in cleanupShortcutOptions"
+            :key="item.label"
+            secondary
+            size="small"
+            attr-type="button"
+            @click="setCleanupShortcut(item.getRange)"
+          >
+            {{ item.label }}
+          </n-button>
+        </div>
+        <n-date-picker
+          v-model:value="cleanupRange"
+          type="datetimerange"
+          clearable
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          class="cleanup-range-picker"
+        />
+      </div>
+      <template #footer>
+        <div class="modal-actions">
+          <n-button attr-type="button" :disabled="cleanupLoading" @click="cleanupModalVisible = false">取消</n-button>
+          <n-button
+            type="error"
+            attr-type="button"
+            :loading="cleanupLoading"
+            :disabled="cleanupConfirmDisabled"
+            @click="confirmClearProxyLogs"
+          >
+            确定清空
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
 
     <n-drawer
       v-model:show="detailDrawerVisible"
@@ -547,5 +659,27 @@ onMounted(loadPage);
   margin: 18px 0 10px;
   font-size: 15px;
   font-weight: 700;
+}
+
+.cleanup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shortcut-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cleanup-range-picker {
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

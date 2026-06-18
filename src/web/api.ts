@@ -310,6 +310,15 @@ export type ProxyLog = {
   retryCount: number;
 };
 
+export type ClearProxyLogsResult = {
+  ok: boolean;
+  from: string;
+  to: string;
+  deletedProxyLogs: number;
+  deletedProxyDebugTraces: number;
+  deletedProxyDebugAttempts: number;
+};
+
 export type ProxyDebugAttempt = {
   id: number;
   traceId: number;
@@ -845,6 +854,8 @@ export const api = {
   listProxyLogs: (query: Record<string, QueryValue> = {}) =>
     apiRequest<ListResponse<ProxyLog>>(buildQuery('/api/proxy-logs', query)),
   getProxyLog: (id: number) => apiRequest<ProxyLog>(`/api/proxy-logs/${id}`),
+  clearProxyLogs: (body: { from: string; to: string }) =>
+    apiRequest<ClearProxyLogsResult>('/api/proxy-logs', { method: 'DELETE', body }),
   listProxyDebugTraces: (query: Record<string, QueryValue> = {}) =>
     apiRequest<ListResponse<ProxyDebugTraceListItem>>(
       buildQuery('/api/proxy-debug-traces', query)

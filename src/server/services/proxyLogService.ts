@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { db, schema, sqlite } from '../db/index.js';
 import { stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 
@@ -30,6 +30,15 @@ export type PendingProxyLogInput = Pick<
   ProxyLogInput,
   'downstreamApiKeyId' | 'modelRequested' | 'isStream' | 'debugTraceId'
 >;
+
+export type ClearProxyLogsResult = {
+  ok: boolean;
+  from: string;
+  to: string;
+  deletedProxyLogs: number;
+  deletedProxyDebugTraces: number;
+  deletedProxyDebugAttempts: number;
+};
 
 function parseBillingDetails(value: string | null): unknown {
   if (!value) return null;
@@ -224,4 +233,41 @@ export async function getProxyLog(id: number) {
     .where(eq(schema.proxyLogs.id, id))
     .get();
   return row ? { ...row, billingDetails: parseBillingDetails(row.billingDetails) } : null;
+}
+
+export function clearProxyLogsByRange(input: { from: string; to: string }): ClearProxyLogsResult {
+  const deleted = sqlite.transaction(() => {
+    // 清理请求记录时同步删除关联 trace，避免日志详情残留孤立尝试记录。
+    const deletedProxyDebugAttempts = sqlite.prepare(`
+DELETE FROM proxy_debug_attempts
+WHERE trace_id IN (
+  SELECT debug_trace_id FROM proxy_logs WHERE created_at >= ? AND created_at <= ? AND debug_trace_id IS NOT NULL
+)
+`).run(input.from, input.to).changes;
+
+    const deletedProxyDebugTraces = sqlite.prepare(`
+DELETE FROM proxy_debug_traces
+WHERE id IN (
+  SELECT debug_trace_id FROM proxy_logs WHERE created_at >= ? AND created_at <= ? AND debug_trace_id IS NOT NULL
+)
+`).run(input.from, input.to).changes;
+
+    const deletedProxyLogs = db
+      .delete(schema.proxyLogs)
+      .where(and(gte(schema.proxyLogs.createdAt, input.from), lte(schema.proxyLogs.createdAt, input.to)))
+      .run().changes;
+
+    return {
+      deletedProxyLogs,
+      deletedProxyDebugTraces,
+      deletedProxyDebugAttempts
+    };
+  })();
+
+  return {
+    ok: true,
+    from: input.from,
+    to: input.to,
+    ...deleted
+  };
 }

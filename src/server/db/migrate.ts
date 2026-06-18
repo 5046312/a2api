@@ -32,9 +32,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS accounts_platform_idx ON accounts(platform);
 CREATE INDEX IF NOT EXISTS accounts_status_idx ON accounts(status);
-CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, status);
 
 CREATE TABLE IF NOT EXISTS account_tokens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -345,6 +343,10 @@ CREATE INDEX IF NOT EXISTS events_type_created_idx ON events(type, created_at);
   ensureColumn('accounts', 'proxy_url', 'ALTER TABLE accounts ADD COLUMN proxy_url TEXT');
   ensureColumn('accounts', 'use_system_proxy', 'ALTER TABLE accounts ADD COLUMN use_system_proxy INTEGER NOT NULL DEFAULT 0');
   ensureColumn('accounts', 'custom_headers', 'ALTER TABLE accounts ADD COLUMN custom_headers TEXT');
+  sqlite.exec(`
+CREATE INDEX IF NOT EXISTS accounts_platform_idx ON accounts(platform);
+CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, status);
+`);
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'channel_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN channel_id INTEGER');
   ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
