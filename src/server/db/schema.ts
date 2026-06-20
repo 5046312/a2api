@@ -280,6 +280,7 @@ export const proxyDebugAttempts = sqliteTable(
     routeId: integer('route_id'),
     accountId: integer('account_id'),
     modelActual: text('model_actual'),
+    routingStrategy: text('routing_strategy'),
     selectionRandom: real('selection_random'),
     selectionProbability: real('selection_probability'),
     selectionCandidatesJson: text('selection_candidates_json'),

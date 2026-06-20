@@ -24,14 +24,15 @@ const settingKeys = [
   'notificationWebhookEnabled',
   'notificationWebhookUrl',
   'notifyCooldownSec',
-  'temporaryDisableEnabled',
   'temporaryDisableRules'
 ] as const;
+const legacySettingKeys = ['temporaryDisableEnabled'] as const;
 
 const systemProxyProbeUrl = 'https://www.gstatic.com/generate_204';
 const systemProxyTestTimeoutMs = 15_000;
 
 const temporaryDisableRuleSchema = z.object({
+  matchType: z.enum(['http_status', 'fetch_error']).optional().default('http_status'),
   statusCode: z.number().int().min(100).max(599),
   keywords: z.array(z.string().trim().min(1)).min(1),
   durationMinutes: z.number().int().min(1),
@@ -53,7 +54,6 @@ export const settingsPayloadSchema = z.object({
   notificationWebhookUrl: z.string().trim().optional(),
   clearNotificationWebhookUrl: z.boolean().optional(),
   notifyCooldownSec: z.number().int().min(0).optional(),
-  temporaryDisableEnabled: z.boolean().optional(),
   temporaryDisableRules: z.array(temporaryDisableRuleSchema).optional()
 });
 
@@ -109,6 +109,7 @@ function normalizeAdminIpAllowlist(value: string[]): string[] {
 function normalizeTemporaryDisableRules(value: TemporaryDisableRule[]): TemporaryDisableRule[] {
   return value
     .map((rule) => ({
+      matchType: rule.matchType === 'fetch_error' ? 'fetch_error' as const : 'http_status' as const,
       statusCode: rule.statusCode,
       keywords: [...new Set(rule.keywords.map((item) => item.trim()).filter(Boolean))],
       durationMinutes: rule.durationMinutes,
@@ -133,7 +134,6 @@ function snapshotFromConfig(): SettingsSnapshot {
     notificationWebhookUrl: '',
     notificationWebhookUrlMasked: maskSecret(config.notificationWebhookUrl),
     notifyCooldownSec: config.notifyCooldownSec,
-    temporaryDisableEnabled: config.temporaryDisableEnabled,
     temporaryDisableRules: config.temporaryDisableRules
   };
 }
@@ -141,13 +141,14 @@ function snapshotFromConfig(): SettingsSnapshot {
 function parseStoredSettings(rows: Array<{ key: string; value: string | null }>): SettingsPayload {
   const values: Record<string, unknown> = {};
   for (const row of rows) {
-    if (!settingKeys.includes(row.key as (typeof settingKeys)[number])) continue;
+    if (!settingKeys.includes(row.key as (typeof settingKeys)[number]) && !legacySettingKeys.includes(row.key as (typeof legacySettingKeys)[number])) continue;
     try {
       values[row.key] = row.value ? JSON.parse(row.value) : null;
     } catch {
       values[row.key] = undefined;
     }
   }
+  for (const key of legacySettingKeys) delete values[key];
   const parsed = settingsPayloadSchema.safeParse(values);
   if (!parsed.success) return {};
   if (parsed.data.balanceRefreshCron !== undefined && !isValidCronExpression(parsed.data.balanceRefreshCron)) {
@@ -180,10 +181,6 @@ function applySettings(payload: SettingsPayload): void {
   if (payload.clearNotificationWebhookUrl) config.notificationWebhookUrl = '';
   if (payload.notificationWebhookUrl !== undefined) config.notificationWebhookUrl = resolveNotificationWebhookUrl(payload.notificationWebhookUrl);
   if (payload.notifyCooldownSec !== undefined) config.notifyCooldownSec = payload.notifyCooldownSec;
-  if (payload.temporaryDisableEnabled !== undefined) {
-    config.temporaryDisableEnabled = payload.temporaryDisableEnabled;
-    clearTokenRouterCache();
-  }
   if (payload.temporaryDisableRules !== undefined) {
     config.temporaryDisableRules = normalizeTemporaryDisableRules(payload.temporaryDisableRules);
     clearTokenRouterCache();

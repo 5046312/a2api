@@ -20,6 +20,7 @@ import {
 } from '../../services/proxyVideoTaskService.js';
 import { fetchDispatcher, mergeCustomHeaders, resolveOpenAiPath, safeHeaders } from '../../shared/http.js';
 import { sendError } from '../../shared/errors.js';
+import { buildTemporaryDisableReason, matchTemporaryDisableRule } from '../../shared/proxyTemporaryDisable.js';
 import { ensureMultipartBufferParser, parseMultipartFormData, type MultipartFile, type MultipartFormData } from './multipart.js';
 
 type UpstreamRequestBody = NonNullable<Parameters<typeof fetch>[1]>['body'];
@@ -30,7 +31,7 @@ type VideoCreateInput = {
   formData: MultipartFormData | null;
   jsonBody: Record<string, unknown> | null;
 };
-type VideoCreateAttemptResult = { done: true; response: unknown } | { done: false; error: string };
+type VideoCreateAttemptResult = { done: true; response: unknown } | { done: false; error: string; httpStatus?: number; switchChannel?: boolean };
 
 const videoCreateBodySchema = z.object({
   model: z.string().trim().min(1),
@@ -65,6 +66,7 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
     const channelRetryAttempts = Math.max(1, config.proxyChannelRetryAttempts);
     let retryCount = 0;
     let lastError = 'No available channel';
+    let lastErrorHttpStatus = 503;
 
     while (excludedChannelIds.length < maxChannelAttempts) {
       const selected = await selectChannel(parsed.requestedModel, auth.policy, excludedChannelIds);
@@ -87,15 +89,17 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
         if (result.done) return result.response;
 
         lastError = result.error;
+        lastErrorHttpStatus = result.httpStatus ?? 503;
         channelFailures += 1;
         retryCount += 1;
+        if (result.switchChannel) break;
       }
       excludedChannelIds.push(selected.channelId);
     }
 
     await finalizeProxyDebugTrace(traceId, {
       finalStatus: 'failed',
-      finalHttpStatus: 503,
+      finalHttpStatus: lastErrorHttpStatus,
       decisionSummary: { error: lastError, excludedChannelIds, retryCount }
     });
     await finalizeProxyLog({
@@ -104,13 +108,13 @@ export async function videosProxyRoutes(app: FastifyInstance): Promise<void> {
       downstreamApiKeyId: auth.keyId,
       modelRequested: parsed.requestedModel,
       status: 'failed',
-      httpStatus: 503,
+      httpStatus: lastErrorHttpStatus,
       isStream: false,
       latencyMs: Date.now() - startedAt,
       errorMessage: lastError,
       retryCount
     });
-    return sendError(reply, 503, 'no_available_channel', lastError, 'no_available_channel');
+    return sendError(reply, lastErrorHttpStatus, 'no_available_channel', lastError, 'no_available_channel');
   });
 
   app.get('/v1/videos/:id', async (request: VideoTaskRequest, reply) => {
@@ -192,6 +196,7 @@ async function createVideoTaskWithChannel(input: {
       routeId: input.selected.routeId,
       accountId: input.selected.accountId,
       modelActual: input.selected.sourceModel,
+      routingStrategy: input.selected.routingStrategy,
       selectionRandom: input.selected.selectionRandom,
       selectionProbability: input.selected.selectionProbability,
       selectionCandidates: input.selected.selectionCandidates,
@@ -282,6 +287,14 @@ async function createVideoTaskWithChannel(input: {
     await recordProxyDebugAttempt({
       traceId: input.traceId,
       attemptIndex,
+      channelId: input.selected.channelId,
+      routeId: input.selected.routeId,
+      accountId: input.selected.accountId,
+      modelActual: input.selected.sourceModel,
+      routingStrategy: input.selected.routingStrategy,
+      selectionRandom: input.selected.selectionRandom,
+      selectionProbability: input.selected.selectionProbability,
+      selectionCandidates: input.selected.selectionCandidates,
       endpoint: formatSelectedEndpointName(input.selected),
       requestPath: '/v1/videos',
       targetUrl,
@@ -327,6 +340,13 @@ async function createVideoTaskWithChannel(input: {
       : error instanceof Error
         ? error.message
         : 'Network error';
+    const temporaryDisableMatch = matchTemporaryDisableRule(null, message);
+    const temporaryDisableUntil = temporaryDisableMatch
+      ? new Date(Date.now() + temporaryDisableMatch.rule.durationMinutes * 60_000).toISOString()
+      : null;
+    const temporaryDisableReason = temporaryDisableMatch && temporaryDisableUntil
+      ? buildTemporaryDisableReason(message, temporaryDisableMatch, temporaryDisableUntil)
+      : null;
     await recordProxyDebugAttempt({
       traceId: input.traceId,
       attemptIndex,
@@ -334,8 +354,21 @@ async function createVideoTaskWithChannel(input: {
       requestPath: '/v1/videos',
       targetUrl,
       requestHeaders: {},
-      rawErrorText: message
+      rawErrorText: temporaryDisableReason ?? message
     });
+    if (temporaryDisableMatch && temporaryDisableUntil && temporaryDisableReason) {
+      await recordChannelFailure(input.selected.channelId, temporaryDisableReason, {
+        cooldownUntil: temporaryDisableUntil,
+        eventTitle: '上游通道临时禁用',
+        eventLevel: 'warning'
+      });
+      return {
+        done: false,
+        error: temporaryDisableReason,
+        httpStatus: temporaryDisableMatch.rule.statusCode,
+        switchChannel: true
+      };
+    }
     await recordChannelFailure(input.selected.channelId, message);
     return { done: false, error: message };
   }

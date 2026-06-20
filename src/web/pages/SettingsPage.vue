@@ -5,6 +5,7 @@ import { api, type SettingsSnapshot } from '@web/api';
 
 type TemporaryDisableRuleForm = {
   uid: number;
+  matchType: 'http_status' | 'fetch_error';
   statusCode: number | null;
   keywordsText: string;
   durationMinutes: number;
@@ -37,7 +38,6 @@ const form = reactive({
   notificationWebhookUrl: '',
   clearNotificationWebhookUrl: false,
   notifyCooldownSec: 300,
-  temporaryDisableEnabled: false,
   temporaryDisableRules: [] as TemporaryDisableRuleForm[]
 });
 const routingStrategyOptions = [
@@ -45,11 +45,16 @@ const routingStrategyOptions = [
   { label: '稳定优先', value: 'stable_first' },
   { label: '轮询', value: 'round_robin' }
 ];
+const temporaryDisableMatchTypeOptions = [
+  { label: 'HTTP 状态', value: 'http_status' },
+  { label: '网络错误', value: 'fetch_error' }
+];
 const temporaryDisablePresets: Omit<TemporaryDisableRuleForm, 'uid'>[] = [
-  { statusCode: 403, keywordsText: 'quota, exceeded, insufficient', durationMinutes: 60, description: '额度不足' },
-  { statusCode: 429, keywordsText: 'rate limit, too many requests', durationMinutes: 10, description: '上游限流' },
-  { statusCode: 503, keywordsText: 'unavailable, maintenance', durationMinutes: 30, description: '服务维护' },
-  { statusCode: 529, keywordsText: 'overloaded, too many', durationMinutes: 60, description: '上游过载' }
+  { matchType: 'http_status', statusCode: 403, keywordsText: 'quota, exceeded, insufficient', durationMinutes: 60, description: '额度不足' },
+  { matchType: 'http_status', statusCode: 429, keywordsText: 'rate limit, too many requests', durationMinutes: 10, description: '上游限流' },
+  { matchType: 'http_status', statusCode: 503, keywordsText: 'unavailable, maintenance', durationMinutes: 30, description: '服务维护' },
+  { matchType: 'http_status', statusCode: 529, keywordsText: 'overloaded, too many', durationMinutes: 60, description: '上游过载' },
+  { matchType: 'fetch_error', statusCode: 502, keywordsText: 'fetch failed, ECONNRESET, ENOTFOUND, EAI_AGAIN, ECONNREFUSED', durationMinutes: 10, description: '网络错误' }
 ];
 
 watch(message, (value) => {
@@ -101,8 +106,8 @@ const rows = computed(() => {
     },
     {
       label: '临时禁用规则',
-      value: settings.value.temporaryDisableEnabled ? `已启用，${settings.value.temporaryDisableRules.length} 条规则` : '未启用',
-      note: '命中状态码和关键词后，当前通道会临时进入冷却。'
+      value: `${settings.value.temporaryDisableRules.length} 条规则`,
+      note: '命中 HTTP 状态或网络错误关键词后，当前通道会临时进入冷却。'
     },
     {
       label: '余额刷新 Cron',
@@ -161,8 +166,8 @@ function syncForm(snapshot: SettingsSnapshot) {
   form.notificationWebhookUrl = '';
   form.clearNotificationWebhookUrl = false;
   form.notifyCooldownSec = snapshot.notifyCooldownSec;
-  form.temporaryDisableEnabled = snapshot.temporaryDisableEnabled;
   form.temporaryDisableRules.splice(0, form.temporaryDisableRules.length, ...snapshot.temporaryDisableRules.map((rule) => createTemporaryDisableRuleForm({
+    matchType: rule.matchType || 'http_status',
     statusCode: rule.statusCode,
     keywordsText: rule.keywords.join(', '),
     durationMinutes: rule.durationMinutes,
@@ -179,6 +184,7 @@ function buildTemporaryDisableRules() {
     if (durationMinutes < 1) throw new Error(`临时禁用规则 #${index + 1} 的冷却分钟必须大于 0`);
     if (keywords.length === 0) throw new Error(`临时禁用规则 #${index + 1} 至少填写一个关键词`);
     return {
+      matchType: rule.matchType,
       statusCode,
       keywords,
       durationMinutes,
@@ -205,8 +211,7 @@ function buildPayload() {
     notificationWebhookEnabled: form.notificationWebhookEnabled,
     clearNotificationWebhookUrl: form.clearNotificationWebhookUrl,
     notifyCooldownSec: Math.max(0, Math.trunc(Number(form.notifyCooldownSec) || 0)),
-    temporaryDisableEnabled: form.temporaryDisableEnabled,
-    temporaryDisableRules: form.temporaryDisableEnabled ? buildTemporaryDisableRules() : []
+    temporaryDisableRules: buildTemporaryDisableRules()
   };
   const webhookUrl = form.notificationWebhookUrl.trim();
   if (webhookUrl) payload.notificationWebhookUrl = webhookUrl;
@@ -215,6 +220,7 @@ function buildPayload() {
 
 function addTemporaryDisableRule(preset?: Omit<TemporaryDisableRuleForm, 'uid'>) {
   form.temporaryDisableRules.push(createTemporaryDisableRuleForm({
+    matchType: preset?.matchType ?? 'http_status',
     statusCode: preset?.statusCode ?? null,
     keywordsText: preset?.keywordsText ?? '',
     durationMinutes: preset?.durationMinutes ?? 30,
@@ -382,15 +388,13 @@ onMounted(loadSettings);
           <n-tab-pane name="temporary-disable" tab="临时禁用规则">
             <div class="temporary-disable-header">
               <div>
-                <label class="check-row">
-                  <n-checkbox v-model:checked="form.temporaryDisableEnabled">启用临时禁用规则</n-checkbox>
-                </label>
-                <p class="muted">上游错误同时命中状态码和任一关键词时，当前通道进入临时冷却并继续尝试下一通道。</p>
+                <h3>临时禁用规则</h3>
+                <p class="muted">规则默认启用；HTTP 状态按上游响应匹配，网络错误按 fetch failed 等错误文本匹配，状态码用于最终返回给客户端。</p>
               </div>
-              <n-button secondary attr-type="button" :disabled="!form.temporaryDisableEnabled" @click="addTemporaryDisableRule()">新增规则</n-button>
+              <n-button secondary attr-type="button" @click="addTemporaryDisableRule()">新增规则</n-button>
             </div>
 
-            <div v-if="form.temporaryDisableEnabled" class="temporary-disable-body">
+            <div class="temporary-disable-body">
               <div class="rule-preset-row">
                 <n-button
                   v-for="preset in temporaryDisablePresets"
@@ -425,7 +429,11 @@ onMounted(loadSettings);
 
                   <div class="form-grid rule-grid">
                     <label class="field">
-                      <span>状态码</span>
+                      <span>匹配类型</span>
+                      <n-select v-model:value="rule.matchType" :options="temporaryDisableMatchTypeOptions" />
+                    </label>
+                    <label class="field">
+                      <span>{{ rule.matchType === 'fetch_error' ? '返回状态码' : '状态码' }}</span>
                       <n-input-number v-model:value="rule.statusCode" :min="100" :max="599" />
                     </label>
                     <label class="field">

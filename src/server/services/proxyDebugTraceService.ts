@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db, schema, sqlite } from '../db/index.js';
+import { ensureProxyDebugAttemptCompatibility } from '../db/migrate.js';
 import { parseJsonArray, parseJsonObject, stringifyJson } from '../shared/json.js';
 import { nowIso } from '../shared/time.js';
 import type { SelectionCandidateSnapshot } from './tokenRouter.js';
 
 const sensitiveHeaderNames = new Set(['authorization', 'cookie', 'x-api-key', 'x-goog-api-key']);
+let proxyDebugAttemptCompatibilityChecked = false;
 
 export type CreateProxyDebugTraceInput = {
   downstreamPath: string;
@@ -20,6 +22,7 @@ export type RecordProxyDebugAttemptInput = {
   routeId?: number | null;
   accountId?: number | null;
   modelActual?: string | null;
+  routingStrategy?: string | null;
   selectionRandom?: number | null;
   selectionProbability?: number | null;
   selectionCandidates?: SelectionCandidateSnapshot[] | null;
@@ -69,6 +72,7 @@ export async function createProxyDebugTrace(input: CreateProxyDebugTraceInput): 
 }
 
 export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInput): Promise<void> {
+  ensureProxyDebugAttemptColumns();
   const updateValues: Partial<typeof schema.proxyDebugAttempts.$inferInsert> = {
     endpoint: input.endpoint,
     requestPath: input.requestPath,
@@ -81,6 +85,7 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
   if (input.routeId !== undefined) updateValues.routeId = input.routeId;
   if (input.accountId !== undefined) updateValues.accountId = input.accountId;
   if (input.modelActual !== undefined) updateValues.modelActual = input.modelActual;
+  if (input.routingStrategy !== undefined) updateValues.routingStrategy = input.routingStrategy;
   if (input.selectionRandom !== undefined) updateValues.selectionRandom = input.selectionRandom;
   if (input.selectionProbability !== undefined) updateValues.selectionProbability = input.selectionProbability;
   if (input.selectionCandidates !== undefined) updateValues.selectionCandidatesJson = stringifyJson(input.selectionCandidates);
@@ -94,6 +99,7 @@ export async function recordProxyDebugAttempt(input: RecordProxyDebugAttemptInpu
       routeId: input.routeId ?? null,
       accountId: input.accountId ?? null,
       modelActual: input.modelActual ?? null,
+      routingStrategy: input.routingStrategy ?? null,
       selectionRandom: input.selectionRandom ?? null,
       selectionProbability: input.selectionProbability ?? null,
       selectionCandidatesJson: input.selectionCandidates === undefined ? null : stringifyJson(input.selectionCandidates),
@@ -259,6 +265,7 @@ export async function listProxyFailureLogs(query: {
 }
 
 export async function getProxyDebugTraceDetail(id: number) {
+  ensureProxyDebugAttemptColumns();
   const trace = await db.select().from(schema.proxyDebugTraces).where(eq(schema.proxyDebugTraces.id, id)).get();
   if (!trace) return null;
   const attempts = await db
@@ -309,6 +316,12 @@ WHERE created_at >= ? AND created_at <= ?
     to: input.to,
     ...deleted
   };
+}
+
+function ensureProxyDebugAttemptColumns(): void {
+  if (proxyDebugAttemptCompatibilityChecked) return;
+  ensureProxyDebugAttemptCompatibility();
+  proxyDebugAttemptCompatibilityChecked = true;
 }
 
 function sanitizeHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { FastifyServerOptions } from 'fastify';
 
 export type TemporaryDisableRule = {
+  matchType: 'http_status' | 'fetch_error';
   statusCode: number;
   keywords: string[];
   durationMinutes: number;
@@ -31,7 +32,6 @@ export type AppConfig = {
   notificationWebhookEnabled: boolean;
   notificationWebhookUrl: string;
   notifyCooldownSec: number;
-  temporaryDisableEnabled: boolean;
   temporaryDisableRules: TemporaryDisableRule[];
 };
 
@@ -106,7 +106,6 @@ export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
     notificationWebhookEnabled: parseBoolean(env.WEBHOOK_ENABLED, false),
     notificationWebhookUrl: env.WEBHOOK_URL?.trim() || '',
     notifyCooldownSec: Math.max(0, Math.trunc(parseNumber(env.NOTIFY_COOLDOWN_SEC, 300))),
-    temporaryDisableEnabled: false,
     temporaryDisableRules: []
   };
 }

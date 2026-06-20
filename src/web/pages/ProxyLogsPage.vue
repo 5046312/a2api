@@ -137,6 +137,13 @@ function formatSelectionScore(attempt: ProxyDebugTrace['attempts'][number]) {
   return formatPercent(attempt.selectionProbability);
 }
 
+function formatRoutingStrategy(value: string | null | undefined) {
+  if (value === 'weighted') return '加权随机';
+  if (value === 'stable_first') return '稳定优先';
+  if (value === 'round_robin') return '轮询';
+  return '-';
+}
+
 function getSelectionCandidates(attempt: ProxyDebugTrace['attempts'][number]) {
   return Array.isArray(attempt.selectionCandidates) ? attempt.selectionCandidates : [];
 }
@@ -835,6 +842,7 @@ onMounted(loadPage);
                     <th>路由 / 通道</th>
                     <th>账号</th>
                     <th>实际模型</th>
+                    <th>策略</th>
                     <th>得分</th>
                     <th>Endpoint</th>
                     <th>目标</th>
@@ -848,6 +856,7 @@ onMounted(loadPage);
                     <td>{{ formatAttemptRoute(attempt) }}</td>
                     <td>{{ formatAttemptAccount(attempt) }}</td>
                     <td class="mono">{{ attempt.modelActual || '-' }}</td>
+                    <td>{{ formatRoutingStrategy(attempt.routingStrategy) }}</td>
                     <td>
                       <n-popover v-if="getSelectionCandidates(attempt).length > 0" trigger="hover" placement="bottom">
                         <template #trigger>
@@ -886,7 +895,7 @@ onMounted(loadPage);
                     <td class="error-cell">{{ attempt.rawErrorText || '-' }}</td>
                   </tr>
                   <tr v-if="selectedTrace.attempts.length === 0">
-                    <td class="empty" colspan="9">暂无尝试记录</td>
+                    <td class="empty" colspan="10">暂无尝试记录</td>
                   </tr>
                 </tbody>
               </n-table>

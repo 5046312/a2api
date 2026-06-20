@@ -31,7 +31,7 @@ P0 implemented:
 - Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
 - Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
 - Failure logs show failed channel attempts from debug trace attempts, including requests that later succeeded after failover.
-- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, selected-channel score percentage, hoverable same-priority-bucket probability snapshot with a pie chart and fixed 12 o'clock hit pointer, and channel attempt fields.
+- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, trigger-time channel strategy, selected-channel score percentage, hoverable same-priority-bucket probability snapshot with a pie chart and fixed 12 o'clock hit pointer, and channel attempt fields.
 - Proxy debug trace writes an attempt row before each real upstream fetch starts, then updates that same row with the response or failure result, including repeated retries against the same upstream account.
 - Runtime settings snapshot and tabbed editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, temporary channel-disable rules, balance refresh cron, log cleanup, and system proxy testing.
 - Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
@@ -139,6 +139,7 @@ NOTIFY_COOLDOWN_SEC=300
 SQLite defaults to `${DATA_DIR}/a2api.sqlite`.
 
 `AUTH_TOKEN` is the admin UI login token. It can be set in `a2api/.env` or the process environment. If unset, development mode falls back to `change-me-admin-token`; production mode rejects the built-in default.
+`DEFAULT_ROUTING_STRATEGY` controls the default strategy for new automatic models. Supported values are `weighted`, `stable_first`, and `round_robin`.
 
 ## First Flow
 

@@ -378,6 +378,7 @@ export type ProxyDebugAttempt = {
   routeId: number | null;
   accountId: number | null;
   modelActual: string | null;
+  routingStrategy: string | null;
   selectionRandom: number | null;
   selectionProbability: number | null;
   selectionCandidates: ProxyDebugAttemptSelectionCandidate[];
@@ -445,8 +446,8 @@ export type SettingsSnapshot = {
   notificationWebhookUrl: string;
   notificationWebhookUrlMasked: string;
   notifyCooldownSec: number;
-  temporaryDisableEnabled: boolean;
   temporaryDisableRules: Array<{
+    matchType: 'http_status' | 'fetch_error';
     statusCode: number;
     keywords: string[];
     durationMinutes: number;

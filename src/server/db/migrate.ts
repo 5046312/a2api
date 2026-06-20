@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS proxy_debug_attempts (
   route_id INTEGER,
   account_id INTEGER,
   model_actual TEXT,
+  routing_strategy TEXT,
   selection_random REAL,
   selection_probability REAL,
   selection_candidates_json TEXT,
@@ -353,17 +354,30 @@ CREATE INDEX IF NOT EXISTS accounts_platform_idx ON accounts(platform);
 CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, status);
 `);
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'channel_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN channel_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'account_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN account_id INTEGER');
-  ensureColumn('proxy_debug_attempts', 'model_actual', 'ALTER TABLE proxy_debug_attempts ADD COLUMN model_actual TEXT');
-  ensureColumn('proxy_debug_attempts', 'selection_random', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_random REAL');
-  ensureColumn('proxy_debug_attempts', 'selection_probability', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_probability REAL');
-  ensureColumn('proxy_debug_attempts', 'selection_candidates_json', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_candidates_json TEXT');
+  ensureColumn('token_routes', 'routing_strategy', "ALTER TABLE token_routes ADD COLUMN routing_strategy TEXT NOT NULL DEFAULT 'weighted'");
+  ensureRouteChannelRuntimeColumns();
+  ensureProxyDebugAttemptCompatibility();
   ensureColumn('proxy_video_tasks', 'upstream_url', "ALTER TABLE proxy_video_tasks ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''");
   migrateLegacySiteFieldsToAccounts();
   migrateLegacyVideoTaskUpstreamUrl();
   migrateAccountApiKeysToInternalCredentials();
+}
+
+export function ensureProxyDebugAttemptCompatibility(): void {
+  ensureColumn('proxy_debug_attempts', 'channel_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN channel_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'route_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN route_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'account_id', 'ALTER TABLE proxy_debug_attempts ADD COLUMN account_id INTEGER');
+  ensureColumn('proxy_debug_attempts', 'model_actual', 'ALTER TABLE proxy_debug_attempts ADD COLUMN model_actual TEXT');
+  ensureColumn('proxy_debug_attempts', 'routing_strategy', 'ALTER TABLE proxy_debug_attempts ADD COLUMN routing_strategy TEXT');
+  ensureColumn('proxy_debug_attempts', 'selection_random', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_random REAL');
+  ensureColumn('proxy_debug_attempts', 'selection_probability', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_probability REAL');
+  ensureColumn('proxy_debug_attempts', 'selection_candidates_json', 'ALTER TABLE proxy_debug_attempts ADD COLUMN selection_candidates_json TEXT');
+}
+
+function ensureRouteChannelRuntimeColumns(): void {
+  ensureColumn('route_channels', 'last_used_at', 'ALTER TABLE route_channels ADD COLUMN last_used_at TEXT');
+  ensureColumn('route_channels', 'last_selected_at', 'ALTER TABLE route_channels ADD COLUMN last_selected_at TEXT');
+  ensureColumn('route_channels', 'last_fail_at', 'ALTER TABLE route_channels ADD COLUMN last_fail_at TEXT');
 }
 
 function ensureColumn(table: string, column: string, statement: string): void {

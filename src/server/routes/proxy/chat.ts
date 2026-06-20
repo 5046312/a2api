@@ -15,6 +15,7 @@ import { recordChannelFailure, recordChannelSuccess, selectChannel, type Selecte
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicy.js';
 import { fetchDispatcher, mergeCustomHeaders, resolveOpenAiPath, safeHeaders } from '../../shared/http.js';
 import { sendError } from '../../shared/errors.js';
+import { buildTemporaryDisableReason, matchTemporaryDisableRule } from '../../shared/proxyTemporaryDisable.js';
 
 export const openAiProxyBodySchema = z.object({
   model: z.string().trim().min(1),
@@ -33,12 +34,7 @@ type UsageSummary = {
   completionTokens: number;
   totalTokens: number;
 };
-type TemporaryDisableMatch = {
-  rule: TemporaryDisableRule;
-  ruleIndex: number;
-  matchedKeyword: string;
-};
-type RetryableProxyFailure = { done: false; error: string; switchChannel?: boolean };
+type RetryableProxyFailure = { done: false; error: string; httpStatus?: number; switchChannel?: boolean };
 type ProxyAttemptResult = { done: true; response: unknown } | RetryableProxyFailure;
 
 export type OpenAiProxyEndpointOptions = {
@@ -126,6 +122,7 @@ export async function proxyOpenAiEndpoint(
   });
   let retryCount = 0;
   let lastError = 'No available channel';
+  let lastErrorHttpStatus = 503;
   let attemptedAnyChannel = false;
 
   while (excludedChannelIds.length < maxChannelAttempts) {
@@ -157,6 +154,7 @@ export async function proxyOpenAiEndpoint(
       if (result.done) return result.response;
 
       lastError = result.error;
+      lastErrorHttpStatus = result.httpStatus ?? 503;
       channelFailures += 1;
       retryCount += 1;
       if (result.switchChannel) break;
@@ -172,7 +170,7 @@ export async function proxyOpenAiEndpoint(
   });
   await finalizeProxyDebugTrace(traceId, {
     finalStatus: 'failed',
-    finalHttpStatus: 503,
+    finalHttpStatus: lastErrorHttpStatus,
     decisionSummary: { error: finalError, excludedChannelIds, retryCount }
   });
   await finalizeProxyLog({
@@ -181,13 +179,13 @@ export async function proxyOpenAiEndpoint(
     downstreamApiKeyId,
     modelRequested: body.model,
     status: 'failed',
-    httpStatus: 503,
+    httpStatus: lastErrorHttpStatus,
     isStream: body.stream ?? false,
     latencyMs: Date.now() - startedAt,
     errorMessage: finalError,
     retryCount
   });
-  return sendError(reply, 503, 'no_available_channel', finalError, 'no_available_channel');
+  return sendError(reply, lastErrorHttpStatus, 'no_available_channel', finalError, 'no_available_channel');
 }
 
 async function callUpstreamChat(input: {
@@ -275,7 +273,7 @@ async function callUpstreamChat(input: {
       }
       await recordChannelFailure(input.selected.channelId, error);
       if (isRetryableUpstreamStatus(response.status)) {
-        return { done: false, error };
+        return { done: false, error, httpStatus: upstreamStatusToClientStatus(response.status) };
       }
       await finalizeProxyDebugTrace(input.traceId, {
         selectedChannelId: input.selected.channelId,
@@ -372,10 +370,30 @@ async function callUpstreamChat(input: {
       : error instanceof Error
         ? error.message
         : 'Network error';
-      await recordProxyDebugAttempt({
-        ...attemptRecord,
-        rawErrorText: message
+    const temporaryDisableMatch = matchTemporaryDisableRule(null, message);
+    const temporaryDisableUntil = temporaryDisableMatch
+      ? new Date(Date.now() + temporaryDisableMatch.rule.durationMinutes * 60_000).toISOString()
+      : null;
+    const temporaryDisableReason = temporaryDisableMatch && temporaryDisableUntil
+      ? buildTemporaryDisableReason(message, temporaryDisableMatch, temporaryDisableUntil)
+      : null;
+    await recordProxyDebugAttempt({
+      ...attemptRecord,
+      rawErrorText: temporaryDisableReason ?? message
+    });
+    if (temporaryDisableMatch && temporaryDisableUntil && temporaryDisableReason) {
+      await recordChannelFailure(input.selected.channelId, temporaryDisableReason, {
+        cooldownUntil: temporaryDisableUntil,
+        eventTitle: '上游通道临时禁用',
+        eventLevel: 'warning'
       });
+      return {
+        done: false,
+        error: temporaryDisableReason,
+        httpStatus: temporaryDisableMatch.rule.statusCode,
+        switchChannel: true
+      };
+    }
     await recordChannelFailure(input.selected.channelId, message);
     return { done: false, error: message };
   }
@@ -518,6 +536,7 @@ function buildAttemptRecordInput(
     routeId: input.selected.routeId,
     accountId: input.selected.accountId,
     modelActual: input.selected.sourceModel,
+    routingStrategy: input.selected.routingStrategy,
     selectionRandom: input.selected.selectionRandom,
     selectionProbability: input.selected.selectionProbability,
     selectionCandidates: input.selected.selectionCandidates,
@@ -534,23 +553,6 @@ function formatAccountEndpointName(selected: SelectedChannel): string {
 
 function isRetryableUpstreamStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
-}
-
-function matchTemporaryDisableRule(status: number, rawText: string): TemporaryDisableMatch | null {
-  if (!config.temporaryDisableEnabled) return null;
-  const text = rawText.toLowerCase();
-  for (let index = 0; index < config.temporaryDisableRules.length; index += 1) {
-    const rule = config.temporaryDisableRules[index]!;
-    if (rule.statusCode !== status) continue;
-    const matchedKeyword = rule.keywords.find((keyword) => text.includes(keyword.toLowerCase()));
-    if (matchedKeyword) return { rule, ruleIndex: index, matchedKeyword };
-  }
-  return null;
-}
-
-function buildTemporaryDisableReason(error: string, match: TemporaryDisableMatch, cooldownUntil: string): string {
-  const description = match.rule.description ? `，${match.rule.description}` : '';
-  return `${error}；命中临时禁用规则 #${match.ruleIndex + 1}：HTTP ${match.rule.statusCode} / ${match.matchedKeyword}${description}，冷却至 ${cooldownUntil}`;
 }
 
 function buildChannelExhaustedError(input: {

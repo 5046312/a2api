@@ -19,6 +19,7 @@ export type SelectedChannel = {
   selectionRandom: number | null;
   selectionProbability: number | null;
   selectionCandidates: SelectionCandidateSnapshot[];
+  routingStrategy: string;
   accountToken: string;
   accountUnitCost: number | null;
   sourceModel: string;
@@ -92,7 +93,9 @@ type CandidateRow = {
   failCount: number;
   consecutiveFailCount: number;
   cooldownUntil: string | null;
+  lastUsedAt: string | null;
   lastSelectedAt: string | null;
+  lastFailAt: string | null;
   accountStatus: string;
   accountName: string | null;
   accountApiToken: string | null;
@@ -195,6 +198,7 @@ export async function selectChannel(
     selectionRandom: selection.selectionRandom,
     selectionProbability: selectedCandidate?.probability ?? null,
     selectionCandidates,
+    routingStrategy: selected.routingStrategy,
     accountToken,
     accountUnitCost: selected.modelUnitCost ?? selected.accountUnitCost,
     sourceModel: selected.sourceModel || requestedModel,
@@ -298,6 +302,7 @@ export async function recordChannelSuccess(channelId: number, latencyMs: number,
 export async function recordChannelFailure(channelId: number, reason: string, options: ChannelFailureOptions = {}): Promise<void> {
   const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
   if (!channel) return;
+  const failedAt = nowIso();
   const nextFailCount = channel.consecutiveFailCount + 1;
   const hasTemporaryDisable = !!options.cooldownUntil;
   const cooldownUntil = options.cooldownUntil ?? channel.cooldownUntil;
@@ -309,7 +314,8 @@ export async function recordChannelFailure(channelId: number, reason: string, op
       // 只有系统临时禁用规则命中后才持久冷却；普通失败只影响本次请求排除和后续失败惩罚。
       cooldownLevel: hasTemporaryDisable ? Math.min(3, nextFailCount) : channel.cooldownLevel,
       cooldownUntil,
-      lastFailAt: nowIso()
+      lastUsedAt: failedAt,
+      lastFailAt: failedAt
     })
     .where(eq(schema.routeChannels.id, channelId))
     .run();
@@ -356,7 +362,9 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
       failCount: schema.routeChannels.failCount,
       consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
       cooldownUntil: schema.routeChannels.cooldownUntil,
+      lastUsedAt: schema.routeChannels.lastUsedAt,
       lastSelectedAt: schema.routeChannels.lastSelectedAt,
+      lastFailAt: schema.routeChannels.lastFailAt,
       accountStatus: schema.accounts.status,
       accountName: schema.accounts.username,
       accountApiToken: schema.accounts.apiToken,
@@ -537,13 +545,17 @@ function selectChannelFromBucket(rows: CandidateRow[]): ChannelSelectionResult |
 
 function selectRoundRobinRow(rows: CandidateRow[]): CandidateRow | null {
   return [...rows].sort((left, right) => {
-    const lastSelectedDiff = lastSelectedTime(left.lastSelectedAt) - lastSelectedTime(right.lastSelectedAt);
-    if (lastSelectedDiff !== 0) return lastSelectedDiff;
+    const lastAttemptDiff = lastAttemptTime(left) - lastAttemptTime(right);
+    if (lastAttemptDiff !== 0) return lastAttemptDiff;
     return left.channelId - right.channelId;
   })[0] ?? null;
 }
 
-function lastSelectedTime(value: string | null): number {
+function lastAttemptTime(row: CandidateRow): number {
+  return Math.max(dateTime(row.lastSelectedAt), dateTime(row.lastUsedAt), dateTime(row.lastFailAt));
+}
+
+function dateTime(value: string | null): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
