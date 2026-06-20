@@ -167,7 +167,7 @@ export type RouteItem = {
   failCount: number;
 };
 
-export type RoutingStrategy = 'weighted' | 'stable_first';
+export type RoutingStrategy = 'weighted' | 'stable_first' | 'round_robin';
 
 export type RouteLiteItem = {
   id: number;

@@ -105,6 +105,7 @@ const loadingDefaultCosts = ref(false);
 const savingDefaultCosts = ref(false);
 const costCurrency = ref<'USD' | 'CNY'>('USD');
 const defaultCostGroups = ref<ModelCostGroupDraft[]>([]);
+const activeDefaultCostProvider = ref<string | null>(null);
 const refreshingBalanceId = ref<number | null>(null);
 const refreshingAllBalances = ref(false);
 const editingAccountId = ref<number | null>(null);
@@ -414,13 +415,26 @@ function toCostGroupDraft(group: ModelCostGroup): ModelCostGroupDraft {
   };
 }
 
+function syncActiveDefaultCostProvider() {
+  if (defaultCostGroups.value.length === 0) {
+    activeDefaultCostProvider.value = null;
+    return;
+  }
+  const exists = defaultCostGroups.value.some((group) => group.provider === activeDefaultCostProvider.value);
+  if (!exists) activeDefaultCostProvider.value = defaultCostGroups.value[0]?.provider ?? null;
+}
+
 async function loadDefaultModelCosts(force = false) {
-  if (!force && defaultCostGroups.value.length > 0) return;
+  if (!force && defaultCostGroups.value.length > 0) {
+    syncActiveDefaultCostProvider();
+    return;
+  }
   loadingDefaultCosts.value = true;
   error.value = '';
   try {
     const result = await api.getModelCostDefaults();
     defaultCostGroups.value = result.groups.map(toCostGroupDraft);
+    syncActiveDefaultCostProvider();
   } catch (err) {
     setError(err, '加载默认模型费用失败');
   } finally {
@@ -477,6 +491,7 @@ async function saveDefaultModelCosts() {
     }));
     const result = await api.updateModelCostDefaults(payload);
     defaultCostGroups.value = result.groups.map(toCostGroupDraft);
+    syncActiveDefaultCostProvider();
     message.value = '默认模型费用已保存';
     showCostDrawer.value = false;
   } catch (err) {
@@ -547,6 +562,15 @@ function removeModel(model: string) {
 
 function updateAccountModelCost(item: AccountModelDraft, value: number | null) {
   item.unitCost = storeCost(value);
+}
+
+function hasDefaultCost(model: string) {
+  return defaultCostMap.value.has(model.toLowerCase());
+}
+
+function resetAccountModelCost(item: AccountModelDraft) {
+  if (!hasDefaultCost(item.model)) return;
+  item.unitCost = defaultCostMap.value.get(item.model.toLowerCase()) ?? null;
 }
 
 function clearModelDraft() {
@@ -973,65 +997,77 @@ onMounted(() => {
           </div>
 
           <n-spin :show="loadingDefaultCosts">
-            <section v-for="group in defaultCostGroups" :key="group.provider" class="model-drawer-section">
-              <div class="panel-header">
-                <div class="provider-heading">
-                  <span class="provider-mark" :class="`provider-mark-${group.provider}`">{{ providerMark(group.provider) }}</span>
-                  <div>
-                    <h2>{{ group.label }}</h2>
-                    <p class="muted">{{ group.models.length }} 个默认模型</p>
+            <n-tabs v-if="defaultCostGroups.length > 0" v-model:value="activeDefaultCostProvider" type="line" animated>
+              <n-tab-pane v-for="group in defaultCostGroups" :key="group.provider" :name="group.provider">
+                <template #tab>
+                  <span class="provider-tab">
+                    <span class="provider-mark compact" :class="`provider-mark-${group.provider}`">{{ providerMark(group.provider) }}</span>
+                    <span>{{ group.label }}</span>
+                  </span>
+                </template>
+
+                <section class="model-drawer-section">
+                  <div class="panel-header">
+                    <div class="provider-heading">
+                      <span class="provider-mark" :class="`provider-mark-${group.provider}`">{{ providerMark(group.provider) }}</span>
+                      <div>
+                        <h2>{{ group.label }}</h2>
+                        <p class="muted">{{ group.models.length }} 个默认模型</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <div class="table-wrap compact">
-                <n-table size="small" :bordered="false" single-line class="admin-table model-cost-table">
-                  <thead>
-                    <tr>
-                      <th>模型</th>
-                      <th>成本</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="item in group.models" :key="item.model">
-                      <td class="mono">{{ item.model }}</td>
-                      <td>
-                        <n-input-number
-                          class="cost-input"
-                          :value="displayCost(item.unitCost)"
-                          :min="0"
-                          :precision="6"
-                          :show-button="false"
-                          :placeholder="costPlaceholder()"
-                          @update:value="(value) => updateDefaultCost(item, value)"
-                        />
-                      </td>
-                      <td>
-                        <n-button text type="error" attr-type="button" @click="removeDefaultCostModel(group, item.model)">删除</n-button>
-                      </td>
-                    </tr>
-                    <tr v-if="group.models.length === 0">
-                      <td class="empty" colspan="3">暂无默认模型</td>
-                    </tr>
-                  </tbody>
-                </n-table>
-              </div>
+                  <div class="table-wrap compact">
+                    <n-table size="small" :bordered="false" single-line class="admin-table model-cost-table">
+                      <thead>
+                        <tr>
+                          <th>模型</th>
+                          <th>成本</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="item in group.models" :key="item.model">
+                          <td class="mono">{{ item.model }}</td>
+                          <td>
+                            <n-input-number
+                              class="cost-input"
+                              :value="displayCost(item.unitCost)"
+                              :min="0"
+                              :precision="6"
+                              :show-button="false"
+                              :placeholder="costPlaceholder()"
+                              @update:value="(value) => updateDefaultCost(item, value)"
+                            />
+                          </td>
+                          <td>
+                            <n-button text type="error" attr-type="button" @click="removeDefaultCostModel(group, item.model)">删除</n-button>
+                          </td>
+                        </tr>
+                        <tr v-if="group.models.length === 0">
+                          <td class="empty" colspan="3">暂无默认模型</td>
+                        </tr>
+                      </tbody>
+                    </n-table>
+                  </div>
 
-              <div class="model-input-row">
-                <n-input v-model:value="group.newModel" placeholder="新增模型名" />
-                <n-input-number
-                  class="cost-input"
-                  :value="displayCost(group.newUnitCost)"
-                  :min="0"
-                  :precision="6"
-                  :show-button="false"
-                  :placeholder="costPlaceholder()"
-                  @update:value="(value) => updateNewDefaultCost(group, value)"
-                />
-                <n-button type="primary" attr-type="button" @click="addDefaultCostModel(group)">添加</n-button>
-              </div>
-            </section>
+                  <div class="model-input-row">
+                    <n-input v-model:value="group.newModel" placeholder="新增模型名" />
+                    <n-input-number
+                      class="cost-input"
+                      :value="displayCost(group.newUnitCost)"
+                      :min="0"
+                      :precision="6"
+                      :show-button="false"
+                      :placeholder="costPlaceholder()"
+                      @update:value="(value) => updateNewDefaultCost(group, value)"
+                    />
+                    <n-button type="primary" attr-type="button" @click="addDefaultCostModel(group)">添加</n-button>
+                  </div>
+                </section>
+              </n-tab-pane>
+            </n-tabs>
+            <div v-else class="model-empty">暂无默认模型费用。</div>
           </n-spin>
 
           <div class="model-drawer-footer">
@@ -1079,15 +1115,18 @@ onMounted(() => {
                     <tr v-for="item in accountModels" :key="item.model">
                       <td class="mono">{{ item.model }}</td>
                       <td>
-                        <n-input-number
-                          class="cost-input"
-                          :value="displayCost(item.unitCost)"
-                          :min="0"
-                          :precision="6"
-                          :show-button="false"
-                          :placeholder="costPlaceholder()"
-                          @update:value="(value) => updateAccountModelCost(item, value)"
-                        />
+                        <div class="cost-edit-row">
+                          <n-input-number
+                            class="cost-input"
+                            :value="displayCost(item.unitCost)"
+                            :min="0"
+                            :precision="6"
+                            :show-button="false"
+                            :placeholder="costPlaceholder()"
+                            @update:value="(value) => updateAccountModelCost(item, value)"
+                          />
+                          <n-button text attr-type="button" :disabled="!hasDefaultCost(item.model)" @click="resetAccountModelCost(item)">重置</n-button>
+                        </div>
                       </td>
                       <td>
                         <n-button text type="error" attr-type="button" @click="removeModel(item.model)">删除</n-button>
@@ -1392,6 +1431,13 @@ onMounted(() => {
   gap: 10px;
 }
 
+.provider-tab,
+.cost-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .provider-mark {
   display: inline-flex;
   width: 32px;
@@ -1404,6 +1450,13 @@ onMounted(() => {
   color: #0f172a;
   font-size: 12px;
   font-weight: 800;
+}
+
+.provider-mark.compact {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 10px;
 }
 
 .provider-mark-openai {

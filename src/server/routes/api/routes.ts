@@ -20,7 +20,7 @@ const channelParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
   channelId: z.coerce.number().int().positive()
 });
-const routingStrategySchema = z.enum(['weighted', 'stable_first']);
+const routingStrategySchema = z.enum(['weighted', 'stable_first', 'round_robin']);
 
 export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/routes/rebuild', async () => rebuildRoutes({ preserveManual: true }));

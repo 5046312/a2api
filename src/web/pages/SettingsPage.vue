@@ -42,7 +42,8 @@ const form = reactive({
 });
 const routingStrategyOptions = [
   { label: '加权随机', value: 'weighted' },
-  { label: '稳定优先', value: 'stable_first' }
+  { label: '稳定优先', value: 'stable_first' },
+  { label: '轮询', value: 'round_robin' }
 ];
 const temporaryDisablePresets: Omit<TemporaryDisableRuleForm, 'uid'>[] = [
   { statusCode: 403, keywordsText: 'quota, exceeded, insufficient', durationMinutes: 60, description: '额度不足' },
@@ -60,7 +61,9 @@ watch(error, (value) => {
 });
 
 function routingStrategyLabel(value: string) {
-  return value === 'stable_first' ? '稳定优先' : '加权随机';
+  if (value === 'stable_first') return '稳定优先';
+  if (value === 'round_robin') return '轮询';
+  return '加权随机';
 }
 
 const rows = computed(() => {

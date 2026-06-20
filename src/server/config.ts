@@ -22,7 +22,7 @@ export type AppConfig = {
   requestBodyLimit: number;
   proxyMaxChannelAttempts: number;
   proxyChannelRetryAttempts: number;
-  defaultRoutingStrategy: 'weighted' | 'stable_first';
+  defaultRoutingStrategy: 'weighted' | 'stable_first' | 'round_robin';
   proxyFirstByteTimeoutSec: number;
   tokenRouterCacheTtlMs: number;
   balanceRefreshCron: string;
@@ -65,6 +65,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 function parseRoutingStrategy(value: string | undefined): AppConfig['defaultRoutingStrategy'] {
   const normalized = value?.trim();
   if (normalized === 'stable_first') return 'stable_first';
+  if (normalized === 'round_robin') return 'round_robin';
   return 'weighted';
 }
 

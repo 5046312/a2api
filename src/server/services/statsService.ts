@@ -128,7 +128,7 @@ export async function getUpstreamUsageStats(query: { range: StatsRange; bucket: 
       averageLatencyMs: sql<number>`coalesce(avg(${schema.proxyLogs.latencyMs}), 0)`
     })
     .from(schema.proxyLogs)
-    .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
+    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
     .where(and(...filters))
     .groupBy(bucket, schema.accounts.id, schema.accounts.username, schema.accounts.baseUrl)
     .orderBy(bucket, schema.accounts.id)
@@ -153,8 +153,8 @@ export async function getUpstreamUsageStats(query: { range: StatsRange; bucket: 
 }
 
 export async function getModelUsageStats(query: { range: StatsRange; model?: string | undefined; accountId?: number | undefined }): Promise<ModelUsageItem[]> {
-  const modelName = sql<string>`coalesce(${schema.proxyLogs.modelActual}, ${schema.proxyLogs.modelRequested}, 'unknown')`;
-  const filters: SQL[] = [gte(schema.proxyLogs.createdAt, rangeStartIso(query.range))];
+  const modelName = proxyLogModelNameSql();
+  const filters: SQL[] = [gte(schema.proxyLogs.createdAt, rangeStartIso(query.range)), knownProxyLogModelFilterSql(modelName)];
   if (query.model) filters.push(sql`${modelName} = ${query.model}`);
   if (query.accountId) filters.push(eq(schema.accounts.id, query.accountId));
 
@@ -168,7 +168,7 @@ export async function getModelUsageStats(query: { range: StatsRange; model?: str
       averageLatencyMs: sql<number>`coalesce(avg(${schema.proxyLogs.latencyMs}), 0)`
     })
     .from(schema.proxyLogs)
-    .leftJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
+    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.proxyLogs.accountId))
     .where(and(...filters))
     .groupBy(modelName)
     .orderBy(modelName)
@@ -202,7 +202,14 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
     })
     .from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.modelAvailability.accountId))
-    .where(and(eq(schema.modelAvailability.available, true), eq(schema.accounts.status, 'active')))
+    .where(
+      and(
+        eq(schema.modelAvailability.available, true),
+        eq(schema.accounts.status, 'active'),
+        sql`nullif(trim(${schema.modelAvailability.modelName}), '') is not null`,
+        sql`lower(trim(${schema.modelAvailability.modelName})) <> 'unknown'`
+      )
+    )
     .all();
 
   for (const row of accountRows) {
@@ -212,7 +219,7 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
     pushNumber(aggregate.latencies, row.latencyMs);
   }
 
-  const modelName = sql<string>`coalesce(${schema.proxyLogs.modelActual}, ${schema.proxyLogs.modelRequested}, 'unknown')`;
+  const modelName = proxyLogModelNameSql();
   const logRows = await db
     .select({
       model: modelName,
@@ -222,7 +229,7 @@ export async function getStatsMarketplace(): Promise<StatsMarketplaceItem[]> {
       latencyCount: sql<number>`coalesce(sum(case when ${schema.proxyLogs.latencyMs} is null then 0 else 1 end), 0)`
     })
     .from(schema.proxyLogs)
-    .where(gte(schema.proxyLogs.createdAt, rangeStartIso('7d')))
+    .where(and(gte(schema.proxyLogs.createdAt, rangeStartIso('7d')), knownProxyLogModelFilterSql(modelName)))
     .groupBy(modelName)
     .all();
 
@@ -265,6 +272,14 @@ function ensureMarketplaceAggregate(aggregates: Map<string, MarketplaceAggregate
   };
   aggregates.set(key, next);
   return next;
+}
+
+function proxyLogModelNameSql(): SQL<string> {
+  return sql<string>`coalesce(nullif(trim(${schema.proxyLogs.modelActual}), ''), nullif(trim(${schema.proxyLogs.modelRequested}), ''))`;
+}
+
+function knownProxyLogModelFilterSql(modelName: SQL<string>): SQL {
+  return sql`${modelName} is not null and lower(${modelName}) <> 'unknown'`;
 }
 
 function pushNumber(target: number[], value: number | null): void {

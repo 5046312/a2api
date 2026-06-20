@@ -44,7 +44,7 @@ export const settingsPayloadSchema = z.object({
   proxyFirstByteTimeoutSec: z.number().int().min(0).optional(),
   proxyMaxChannelAttempts: z.number().int().min(1).max(20).optional(),
   proxyChannelRetryAttempts: z.number().int().min(1).max(20).optional(),
-  defaultRoutingStrategy: z.enum(['weighted', 'stable_first']).optional(),
+  defaultRoutingStrategy: z.enum(['weighted', 'stable_first', 'round_robin']).optional(),
   tokenRouterCacheTtlMs: z.number().int().min(100).optional(),
   balanceRefreshCron: z.string().trim().optional(),
   logCleanupCron: z.string().trim().optional(),

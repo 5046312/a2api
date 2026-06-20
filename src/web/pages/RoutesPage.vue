@@ -23,7 +23,8 @@ const notice = useMessage();
 const routeStrategy = ref<RoutingStrategy>('weighted');
 const routingStrategyOptions: Array<{ label: string; value: RoutingStrategy }> = [
   { label: '加权随机', value: 'weighted' },
-  { label: '稳定优先', value: 'stable_first' }
+  { label: '稳定优先', value: 'stable_first' },
+  { label: '轮询', value: 'round_robin' }
 ];
 const routeModeMeta: Record<string, { label: string; description: string }> = {
   exact: {
@@ -51,6 +52,10 @@ const routingStrategyMeta: Record<RoutingStrategy, { label: string; description:
   stable_first: {
     label: '稳定优先',
     description: '先按优先级筛选，再固定选择当前最高分通道，失败或冷却后再切换。'
+  },
+  round_robin: {
+    label: '轮询',
+    description: '先按优先级筛选，再选择最久未被命中的通道；从未命中过的通道优先。'
   }
 };
 const hasCoolingChannel = computed(() => channels.value.some((channel) => isCooling(channel)));
@@ -59,6 +64,12 @@ const strategyAlert = computed(() => {
     return {
       title: '稳定优先',
       content: '先按优先级筛到最小值，再按综合分数固定选择最高分通道；结果稳定，不走随机。'
+    };
+  }
+  if (routeStrategy.value === 'round_robin') {
+    return {
+      title: '轮询',
+      content: '先按优先级筛到最小值，再选择最久未命中的通道；成功、失败或本次排除后都会继续按可用通道轮换。'
     };
   }
   return {
@@ -78,7 +89,9 @@ watch(error, (value) => {
 watch(hasCoolingChannel, syncCooldownTimer);
 
 function normalizeRoutingStrategy(value: string | null | undefined): RoutingStrategy {
-  return value === 'stable_first' ? 'stable_first' : 'weighted';
+  if (value === 'stable_first') return 'stable_first';
+  if (value === 'round_robin') return 'round_robin';
+  return 'weighted';
 }
 
 function routeModeLabel(value: string) {

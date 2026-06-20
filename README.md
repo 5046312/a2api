@@ -15,8 +15,8 @@ P0 implemented:
 - Admin auth failure rate limit with `Retry-After`.
 - Unified upstream account management for API endpoint, API Key, platform, models, downstream keys, and proxy logs.
 - Upstream account create and edit right-side drawer UI for API endpoint, API Key, platform, authentication mode, account-level proxy, unit cost, status, pinned state, and sort order.
-- Upstream account default model-cost drawer with provider groups, editable model costs, USD storage, and RMB display/input conversion.
-- Upstream account model drawer for fixed account model lists, per-model cost editing, upstream model preview selection with default cost prefill, and automatic route rebuild after model changes.
+- Upstream account default model-cost drawer with provider tabs, editable model costs, USD storage, and RMB display/input conversion.
+- Upstream account model drawer for fixed account model lists, per-model cost editing and default-cost reset, upstream model preview selection with default cost prefill, and automatic route rebuild after model changes.
 - Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
 - Upstream account API Key is stored on the account; legacy key-list rows are only read as old-data fallback and are not used to generate model channels.
 - Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
@@ -147,6 +147,6 @@ SQLite defaults to `${DATA_DIR}/a2api.sqlite`.
 3. Open the upstream account page and add an upstream account with API endpoint and API Key.
 4. Refresh upstream account models.
 5. Rebuild models.
-6. If several upstream accounts share the same model, open the model page and use the channel drawer to adjust upstream account priority, weight, or per-model strategy.
+6. If several upstream accounts share the same model, open the model page and use the channel drawer to adjust upstream account priority, weight, or per-model strategy (`weighted`, `stable_first`, or `round_robin`).
 7. Create a downstream key with `modelScope = all`.
 8. Call `/v1/models` or `/v1/chat/completions` using that key.

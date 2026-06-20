@@ -92,6 +92,7 @@ type CandidateRow = {
   failCount: number;
   consecutiveFailCount: number;
   cooldownUntil: string | null;
+  lastSelectedAt: string | null;
   accountStatus: string;
   accountName: string | null;
   accountApiToken: string | null;
@@ -164,17 +165,19 @@ export async function selectChannel(
 
   const bucketPriority = candidates[0]?.priority ?? 0;
   const bucket = candidates.filter((item) => item.priority === bucketPriority);
-  const selection = selectWeighted(bucket);
+  const selection = selectChannelFromBucket(bucket);
   if (!selection) return null;
   const selected = selection.row;
   const selectionCandidates = buildSelectionCandidateSnapshot(candidates, bucket, selected.channelId, selected.routingStrategy);
   const selectedCandidate = selectionCandidates.find((candidate) => candidate.selected) ?? null;
+  const selectedAt = nowIso();
 
   await db
     .update(schema.routeChannels)
-    .set({ lastSelectedAt: nowIso() })
+    .set({ lastSelectedAt: selectedAt })
     .where(eq(schema.routeChannels.id, selected.channelId))
     .run();
+  syncCachedLastSelectedAt(selected.channelId, selectedAt);
 
   const accountToken = selected.tokenValue || selected.accountApiToken || '';
   if (!accountToken) return null;
@@ -249,9 +252,9 @@ export async function explainRouteDecision(
 
   const priority = Math.min(...availableRows.map((row) => row.priority));
   const bucketRows = availableRows.filter((row) => row.priority === priority);
-  const selection = selectWeighted(bucketRows)!;
+  const selection = selectChannelFromBucket(bucketRows)!;
   const selected = selection.row;
-  applyDecisionProbability(candidates, bucketRows, route.routingStrategy);
+  applyDecisionProbability(candidates, bucketRows, selected.channelId, route.routingStrategy);
 
   return {
     requestedModel,
@@ -269,7 +272,7 @@ export async function explainRouteDecision(
       ...(options.forcedChannelId ? [`指定通道：#${options.forcedChannelId}`] : []),
       `策略：${route.routingStrategy}`,
       `优先级桶：${priority}`,
-      route.routingStrategy === 'weighted' ? '按权重随机选择，本接口返回一次模拟结果' : '稳定优先选择最高分通道'
+      routingStrategySummary(route.routingStrategy)
     ],
     candidates
   };
@@ -353,6 +356,7 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
       failCount: schema.routeChannels.failCount,
       consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
       cooldownUntil: schema.routeChannels.cooldownUntil,
+      lastSelectedAt: schema.routeChannels.lastSelectedAt,
       accountStatus: schema.accounts.status,
       accountName: schema.accounts.username,
       accountApiToken: schema.accounts.apiToken,
@@ -458,19 +462,18 @@ function buildDecisionCandidate(
 function applyDecisionProbability(
   candidates: RouteDecisionCandidate[],
   bucketRows: CandidateRow[],
+  selectedChannelId: number,
   routingStrategy: string
 ): void {
   const scores = bucketRows.map((row) => ({ channelId: row.channelId, score: Math.max(0.01, scoreCandidate(row)) }));
   const total = scores.reduce((sum, item) => sum + item.score, 0);
-  const selectedStableFirstId = routingStrategy === 'stable_first'
-    ? [...bucketRows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0]?.channelId
-    : null;
+  const isDeterministicStrategy = routingStrategy === 'stable_first' || routingStrategy === 'round_robin';
 
   for (const item of candidates) {
     const score = scores.find((candidate) => candidate.channelId === item.channelId);
     if (!score) continue;
-    item.probability = routingStrategy === 'stable_first'
-      ? item.channelId === selectedStableFirstId ? 1 : 0
+    item.probability = isDeterministicStrategy
+      ? item.channelId === selectedChannelId ? 1 : 0
       : total > 0 ? Number((score.score / total).toFixed(4)) : 0;
   }
 }
@@ -483,15 +486,13 @@ function buildSelectionCandidateSnapshot(
 ): SelectionCandidateSnapshot[] {
   const scores = bucketRows.map((row) => ({ channelId: row.channelId, score: Math.max(0.01, scoreCandidate(row)) }));
   const total = scores.reduce((sum, item) => sum + item.score, 0);
-  const selectedStableFirstId = routingStrategy === 'stable_first'
-    ? [...bucketRows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0]?.channelId
-    : null;
+  const isDeterministicStrategy = routingStrategy === 'stable_first' || routingStrategy === 'round_robin';
 
   return candidates.map((row) => {
     const score = scores.find((candidate) => candidate.channelId === row.channelId);
     const probability = score
-      ? routingStrategy === 'stable_first'
-        ? row.channelId === selectedStableFirstId ? 1 : 0
+      ? isDeterministicStrategy
+        ? row.channelId === selectedChannelId ? 1 : 0
         : total > 0 ? Number((score.score / total).toFixed(4)) : 0
       : 0;
     return {
@@ -512,10 +513,14 @@ function scoreCandidate(row: CandidateRow): number {
   return row.weight * failPenalty;
 }
 
-function selectWeighted(rows: CandidateRow[]): ChannelSelectionResult | null {
+function selectChannelFromBucket(rows: CandidateRow[]): ChannelSelectionResult | null {
   if (rows.length === 0) return null;
   if (rows[0]?.routingStrategy === 'stable_first') {
     const row = [...rows].sort((left, right) => scoreCandidate(right) - scoreCandidate(left) || left.channelId - right.channelId)[0] ?? null;
+    return row ? { row, selectionRandom: null } : null;
+  }
+  if (rows[0]?.routingStrategy === 'round_robin') {
+    const row = selectRoundRobinRow(rows);
     return row ? { row, selectionRandom: null } : null;
   }
   const scored = rows.map((row) => ({ row, score: Math.max(0.01, scoreCandidate(row)) }));
@@ -528,4 +533,29 @@ function selectWeighted(rows: CandidateRow[]): ChannelSelectionResult | null {
   }
   const row = scored[0]?.row ?? null;
   return row ? { row, selectionRandom } : null;
+}
+
+function selectRoundRobinRow(rows: CandidateRow[]): CandidateRow | null {
+  return [...rows].sort((left, right) => {
+    const lastSelectedDiff = lastSelectedTime(left.lastSelectedAt) - lastSelectedTime(right.lastSelectedAt);
+    if (lastSelectedDiff !== 0) return lastSelectedDiff;
+    return left.channelId - right.channelId;
+  })[0] ?? null;
+}
+
+function lastSelectedTime(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function syncCachedLastSelectedAt(channelId: number, selectedAt: string): void {
+  if (!candidateRowsCache) return;
+  candidateRowsCache.rows = candidateRowsCache.rows.map((row) => (row.channelId === channelId ? { ...row, lastSelectedAt: selectedAt } : row));
+}
+
+function routingStrategySummary(routingStrategy: string): string {
+  if (routingStrategy === 'weighted') return '按权重随机选择，本接口返回一次模拟结果';
+  if (routingStrategy === 'round_robin') return '轮询选择最久未命中的通道，本接口返回一次模拟结果';
+  return '稳定优先选择最高分通道';
 }
