@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import {
   api,
@@ -26,6 +27,7 @@ const loadingTrace = ref(false);
 const error = ref('');
 const message = ref('');
 const notice = useMessage();
+const currentRoute = useRoute();
 const form = reactive({
   model: '',
   downstreamApiKeyId: '',
@@ -83,6 +85,10 @@ const responseTraceId = computed(() => {
 function positiveId(value: string): number | undefined {
   const id = Number(value);
   return value !== '' && Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+function queryString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function setError(err: unknown, fallback: string) {
@@ -152,8 +158,16 @@ async function loadData() {
     models.value = marketplaceData.items;
     routes.value = routeData.items;
     downstreamKeys.value = keyData.items;
+    const queryModel = queryString(currentRoute.query.model);
+    const queryChannelId = queryString(currentRoute.query.channelId);
+    if (queryModel) form.model = queryModel;
     if (!form.model && modelOptions.value.length > 0) form.model = modelOptions.value[0] || '';
     await loadChannelsForSelectedRoute();
+    // 从模型页跳转时，自动锁定对应通道，便于直接发起单通道测试。
+    if (queryChannelId && channels.value.some((channel) => String(channel.id) === queryChannelId)) {
+      form.forcedChannelId = queryChannelId;
+    }
+    await explainSelectedRoute();
   } catch (err) {
     setError(err, '加载模型列表失败');
   } finally {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { InformationCircleOutline } from '@vicons/ionicons5';
 import { api, type RouteChannel, type RouteDecision, type RouteItem, type RoutingStrategy } from '@web/api';
@@ -20,6 +21,7 @@ const channelPriorityDrafts = ref<Record<number, number | null>>({});
 const channelWeightDrafts = ref<Record<number, number | null>>({});
 let cooldownTimer: ReturnType<typeof window.setInterval> | null = null;
 const notice = useMessage();
+const router = useRouter();
 const routeStrategy = ref<RoutingStrategy>('weighted');
 const routingStrategyOptions: Array<{ label: string; value: RoutingStrategy }> = [
   { label: '加权随机', value: 'weighted' },
@@ -301,6 +303,17 @@ async function openChannelDrawer(route: RouteItem) {
   await explainRoute(route);
 }
 
+function openChannelTester(channel: RouteChannel) {
+  if (!selectedRoute.value) return;
+  router.push({
+    path: '/model-tester',
+    query: {
+      model: selectedRoute.value.displayName || selectedRoute.value.modelPattern,
+      channelId: String(channel.id)
+    }
+  });
+}
+
 async function explainRoute(route = selectedRoute.value) {
   if (!route) return;
   error.value = '';
@@ -476,6 +489,7 @@ onBeforeUnmount(() => {
                   <th>冷却</th>
                   <th>成功/失败</th>
                   <th>状态</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -524,9 +538,12 @@ onBeforeUnmount(() => {
                       <template #unchecked>停用</template>
                     </n-switch>
                   </td>
+                  <td>
+                    <n-button text attr-type="button" @click="openChannelTester(channel)">测试</n-button>
+                  </td>
                 </tr>
                 <tr v-if="channels.length === 0">
-                  <td class="empty" colspan="7">暂无通道</td>
+                  <td class="empty" colspan="8">暂无通道</td>
                 </tr>
               </tbody>
             </n-table>
