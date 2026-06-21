@@ -24,7 +24,10 @@ const accountModelItemSchema = z.union([
   z.object({
     model: z.string().trim().min(1),
     unitCost: z.number().min(0).nullable().optional()
-  })
+  }).transform((item) => ({
+    model: item.model,
+    unitCost: item.unitCost ?? null
+  }))
 ]);
 const accountModelsPayloadSchema = z.object({
   models: z.array(accountModelItemSchema).default([])

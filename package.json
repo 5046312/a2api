@@ -15,6 +15,9 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build": "pnpm build:web && pnpm build:server",
     "start": "node dist/server/index.js",
+    "tauri:prepare": "node scripts/prepare-tauri-sidecar.mjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
@@ -24,6 +27,7 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
+    "@tauri-apps/api": "^2.11.0",
     "@vicons/ionicons5": "^0.13.0",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
@@ -42,6 +46,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
+    "@tauri-apps/cli": "^2.11.3",
     "@types/better-sqlite3": "^7.6.11",
     "@types/lodash": "^4.17.24",
     "@types/node": "^22.10.1",

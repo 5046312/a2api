@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "a2api",
+  "version": "0.1.0",
+  "identifier": "com.a2api.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm build && pnpm tauri:prepare",
+    "beforeBuildCommand": "pnpm build && pnpm tauri:prepare",
+    "frontendDist": "../dist/web"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": [
+      "binaries/a2api-sidecar"
+    ],
+    "resources": {
+      "../dist/server": "dist/server",
+      "../dist/web": "dist/web",
+      "../node_modules": "node_modules",
+      "../package.json": "package.json"
+    }
+  }
+}

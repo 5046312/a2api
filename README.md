@@ -73,8 +73,9 @@ P0 implemented:
 - Native monitor page for upstream account status, heartbeat bars, uptime, manual checks, and monitor settings.
 - Automatic model rebuild, channel cooldown, failover, and proxy log writes.
 - Docker Compose service mode.
+- Tauri v2 desktop shell with local Fastify sidecar, dynamic localhost port, desktop data directory, tray open/restart/quit actions, and token injection for local admin login.
 
-Remaining P2/P3 areas are intentionally not folded into this first implementation: Gemini native `countTokens` compatibility, Search web-search simulation, full provider-native OAuth token exchange, persistent OAuth sessions, rebind flow, provider-specific quota semantics, full route group runtime expansion, multi-database runtime, Tauri desktop shell, and advanced analytics.
+Remaining P2/P3 areas are intentionally not folded into this first implementation: Gemini native `countTokens` compatibility, Search web-search simulation, full provider-native OAuth token exchange, persistent OAuth sessions, rebind flow, provider-specific quota semantics, full route group runtime expansion, multi-database runtime, automatic desktop updates, signing/notarization, cross-platform CI release pipeline, and advanced analytics.
 
 ## Commands
 
@@ -92,6 +93,17 @@ Build:
 pnpm build
 pnpm start
 ```
+
+Desktop:
+
+```bash
+pnpm build
+pnpm tauri:prepare
+pnpm tauri:dev
+pnpm tauri:build
+```
+
+The desktop app bundles a Node.js sidecar runtime, `dist/server`, `dist/web`, and production `node_modules`, so end users do not need to install Node.js. Tauri starts the sidecar with `HOST=127.0.0.1`, an available local `PORT`, and a system application data directory; normal `pnpm start` and Docker behavior still use the server defaults.
 
 Format:
 

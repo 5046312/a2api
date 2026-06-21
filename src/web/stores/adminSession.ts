@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '@web/api';
-import { adminTokenClearedEvent, clearAdminToken, getAdminToken, setAdminToken } from '@web/authSession';
+import { adminTokenClearedEvent, clearAdminToken, getAdminToken, hydrateDesktopAdminTokenFromUrl, setAdminToken } from '@web/authSession';
 
 export const useAdminSessionStore = defineStore('adminSession', {
   state: () => ({
@@ -16,6 +16,7 @@ export const useAdminSessionStore = defineStore('adminSession', {
       });
     },
     async bootstrap() {
+      hydrateDesktopAdminTokenFromUrl();
       if (!getAdminToken()) {
         this.authed = false;
         this.booted = true;

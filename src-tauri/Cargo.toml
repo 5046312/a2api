@@ -1,0 +1,19 @@
+[package]
+name = "a2api-desktop"
+version = "0.1.0"
+description = "a2api desktop shell"
+authors = ["a2api"]
+edition = "2021"
+
+[lib]
+name = "a2api_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.9", features = ["tray-icon"] }
+tauri-plugin-shell = "2.3"
+uuid = { version = "1.19", features = ["v4"] }
+url = "2.5"

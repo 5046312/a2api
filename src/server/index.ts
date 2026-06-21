@@ -41,7 +41,12 @@ const app = Fastify(buildFastifyOptions(config));
 await app.register(cors, { origin: true });
 
 app.addHook('onRequest', async (request, reply) => {
-  if (request.url.startsWith('/api/') && request.url !== '/api/health' && !request.url.startsWith('/api/oauth/callback/')) {
+  if (
+    request.url.startsWith('/api/') &&
+    request.url !== '/api/health' &&
+    request.url !== '/api/desktop/health' &&
+    !request.url.startsWith('/api/oauth/callback/')
+  ) {
     await adminAuthMiddleware(request, reply);
     if (reply.sent) return;
   }
