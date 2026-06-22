@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type StatsMarketplaceItem } from '@web/api';
+import { formatCostText } from '@web/costDisplay';
 
 type SortKey = 'accountCount' | 'successRate' | 'avgLatencyMs' | 'minCost' | 'avgCost';
 
@@ -58,7 +59,7 @@ function formatPercent(value: number) {
 }
 
 function formatCost(value: number) {
-  return value > 0 ? `$${value.toFixed(4)}` : '-';
+  return formatCostText(value, { prefix: '$', emptyWhenZero: true });
 }
 
 function formatLatency(value: number) {

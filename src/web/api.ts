@@ -446,6 +446,7 @@ export type SettingsSnapshot = {
   notificationWebhookUrl: string;
   notificationWebhookUrlMasked: string;
   notifyCooldownSec: number;
+  costDisplayDigits: number;
   temporaryDisableRules: Array<{
     matchType: 'http_status' | 'fetch_error';
     statusCode: number;

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { InformationCircleOutline } from '@vicons/ionicons5';
 import { api, type RouteChannel, type RouteDecision, type RouteItem, type RoutingStrategy } from '@web/api';
+import { formatCostText } from '@web/costDisplay';
 
 const routes = ref<RouteItem[]>([]);
 const channels = ref<RouteChannel[]>([]);
@@ -121,7 +122,7 @@ function formatTime(value: string | null | undefined) {
 }
 
 function formatCost(value: number | null | undefined) {
-  return Number(value || 0) > 0 ? `$${Number(value).toFixed(4)}` : '-';
+  return formatCostText(value, { prefix: '$', emptyWhenZero: true });
 }
 
 function isCooling(channel: RouteChannel) {

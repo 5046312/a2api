@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type Account, type DownstreamKey, type ProxyDebugTrace, type ProxyDebugTraceListItem, type ProxyFailureLog, type ProxyLog } from '@web/api';
+import { formatCostText } from '@web/costDisplay';
 
 type CleanupTarget = 'proxyLogs' | 'debugTraces';
 type LogTab = CleanupTarget | 'failedLogs';
@@ -539,7 +540,7 @@ onMounted(loadPage);
                   <td>{{ log.isStream ? '是' : '否' }}</td>
                   <td>{{ log.latencyMs === null ? '-' : `${log.latencyMs}ms` }}</td>
                   <td>{{ log.totalTokens }}</td>
-                  <td>{{ log.estimatedCost.toFixed(6) }}</td>
+                  <td>{{ formatCostText(log.estimatedCost) }}</td>
                   <td class="error-cell">{{ log.errorMessage || '-' }}</td>
                   <td>
                     <n-button text attr-type="button" :disabled="loadingDetailId === log.id" @click="loadDetail(log)">
@@ -792,7 +793,7 @@ onMounted(loadPage);
                     <th>首字节 / 总耗时</th>
                     <td>{{ formatMs(selectedLog.firstByteLatencyMs) }} / {{ formatMs(selectedLog.latencyMs) }}</td>
                     <th>费用</th>
-                    <td>{{ selectedLog.estimatedCost.toFixed(6) }}</td>
+                    <td>{{ formatCostText(selectedLog.estimatedCost) }}</td>
                   </tr>
                 </tbody>
               </n-table>

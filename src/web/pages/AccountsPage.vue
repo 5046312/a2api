@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
 import { api, type Account, type AccountBatchAction, type AccountModelCost, type ModelCostGroup } from '@web/api';
+import { costDisplayDigits, formatCostText, roundCostValue } from '@web/costDisplay';
 
 const defaultPlatformOptions = [
   'openai',
@@ -219,25 +220,21 @@ function formatNumber(value: number | null | undefined) {
   return Number(value || 0).toFixed(2);
 }
 
-function roundCost(value: number) {
-  return Math.round(value * 1_000_000) / 1_000_000;
-}
-
 function displayCost(value: number | null | undefined) {
   if (value === null || value === undefined) return null;
-  return costCurrency.value === 'CNY' ? roundCost(value * cnyRate) : value;
+  return costCurrency.value === 'CNY' ? roundCostValue(value * cnyRate) : roundCostValue(value);
 }
 
 function storeCost(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return null;
-  return costCurrency.value === 'CNY' ? roundCost(value / cnyRate) : roundCost(value);
+  return costCurrency.value === 'CNY' ? roundCostValue(value / cnyRate) : roundCostValue(value);
 }
 
 function formatCost(value: number | null | undefined) {
   const displayValue = displayCost(value);
   if (displayValue === null) return '-';
   const prefix = costCurrency.value === 'CNY' ? '¥' : '$';
-  return `${prefix}${displayValue.toFixed(4)}`;
+  return formatCostText(displayValue, { prefix });
 }
 
 function costPlaceholder() {
@@ -1034,7 +1031,7 @@ onMounted(() => {
                               class="cost-input"
                               :value="displayCost(item.unitCost)"
                               :min="0"
-                              :precision="6"
+                              :precision="costDisplayDigits"
                               :show-button="false"
                               :placeholder="costPlaceholder()"
                               @update:value="(value) => updateDefaultCost(item, value)"
@@ -1057,7 +1054,7 @@ onMounted(() => {
                       class="cost-input"
                       :value="displayCost(group.newUnitCost)"
                       :min="0"
-                      :precision="6"
+                      :precision="costDisplayDigits"
                       :show-button="false"
                       :placeholder="costPlaceholder()"
                       @update:value="(value) => updateNewDefaultCost(group, value)"
@@ -1120,7 +1117,7 @@ onMounted(() => {
                             class="cost-input"
                             :value="displayCost(item.unitCost)"
                             :min="0"
-                            :precision="6"
+                            :precision="costDisplayDigits"
                             :show-button="false"
                             :placeholder="costPlaceholder()"
                             @update:value="(value) => updateAccountModelCost(item, value)"
@@ -1210,7 +1207,7 @@ onMounted(() => {
               class="cost-input"
               :value="displayCost(item.unitCost)"
               :min="0"
-              :precision="6"
+              :precision="costDisplayDigits"
               :show-button="false"
               :placeholder="costPlaceholder()"
               @update:value="(value) => updateAccountModelCost(item, value)"
@@ -1328,7 +1325,7 @@ onMounted(() => {
                 </n-tag>
               </td>
               <td class="mono">{{ formatNumber(account.balance) }} / {{ formatNumber(account.quota) }}</td>
-              <td class="mono">{{ account.unitCost ?? '-' }}</td>
+              <td class="mono">{{ formatCost(account.unitCost) }}</td>
               <td>{{ account.sortOrder }}</td>
               <td>{{ account.isPinned ? '是' : '否' }}</td>
               <td>{{ formatTime(account.lastBalanceRefresh) }}</td>

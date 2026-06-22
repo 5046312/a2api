@@ -148,7 +148,7 @@ Use a downstream key created in the admin UI for normal clients. `PROXY_TOKEN` i
 - Model tester: non-stream chat tests through the same routing core, with optional downstream policy and forced channel.
 - Logs: request filters, final result, billing, retry details, failed attempts, selected-channel score, and probability explanation.
 - Monitor: native upstream account checks, heartbeat bars, uptime windows, manual checks, and settings.
-- Settings: runtime proxy, retry, timeout, allowlist, route cache, temporary-disable rules, log cleanup, backup, and maintenance actions.
+- Settings: runtime proxy, retry, timeout, allowlist, route cache, temporary-disable rules, cost display digits, log cleanup, backup, and maintenance actions.
 
 ## Repository Layout
 

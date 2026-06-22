@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type SettingsSnapshot } from '@web/api';
+import { setCostDisplayDigits } from '@web/costDisplay';
 
 type TemporaryDisableRuleForm = {
   uid: number;
@@ -38,6 +39,7 @@ const form = reactive({
   notificationWebhookUrl: '',
   clearNotificationWebhookUrl: false,
   notifyCooldownSec: 300,
+  costDisplayDigits: 6,
   temporaryDisableRules: [] as TemporaryDisableRuleForm[]
 });
 const routingStrategyOptions = [
@@ -133,6 +135,11 @@ const rows = computed(() => {
       label: '通知冷静期',
       value: `${settings.value.notifyCooldownSec} 秒`,
       note: '由 NOTIFY_COOLDOWN_SEC 控制。'
+    },
+    {
+      label: '费用显示位数',
+      value: `${settings.value.costDisplayDigits} 位`,
+      note: '影响管理端所有费用文本的四舍五入展示。'
     }
   ];
 });
@@ -166,6 +173,8 @@ function syncForm(snapshot: SettingsSnapshot) {
   form.notificationWebhookUrl = '';
   form.clearNotificationWebhookUrl = false;
   form.notifyCooldownSec = snapshot.notifyCooldownSec;
+  form.costDisplayDigits = snapshot.costDisplayDigits;
+  setCostDisplayDigits(snapshot.costDisplayDigits);
   form.temporaryDisableRules.splice(0, form.temporaryDisableRules.length, ...snapshot.temporaryDisableRules.map((rule) => createTemporaryDisableRuleForm({
     matchType: rule.matchType || 'http_status',
     statusCode: rule.statusCode,
@@ -211,6 +220,7 @@ function buildPayload() {
     notificationWebhookEnabled: form.notificationWebhookEnabled,
     clearNotificationWebhookUrl: form.clearNotificationWebhookUrl,
     notifyCooldownSec: Math.max(0, Math.trunc(Number(form.notifyCooldownSec) || 0)),
+    costDisplayDigits: Math.min(12, Math.max(0, Math.trunc(Number(form.costDisplayDigits) || 0))),
     temporaryDisableRules: buildTemporaryDisableRules()
   };
   const webhookUrl = form.notificationWebhookUrl.trim();
@@ -490,6 +500,15 @@ onMounted(loadSettings);
               <div class="form-actions wide">
                 <n-button secondary attr-type="button" :disabled="saving" @click="testNotifications">测试通知</n-button>
               </div>
+            </div>
+          </n-tab-pane>
+
+          <n-tab-pane name="display" tab="显示设置">
+            <div class="form-grid">
+              <label class="field">
+                <span>费用显示位数</span>
+                <n-input-number v-model:value="form.costDisplayDigits" :min="0" :max="12" />
+              </label>
             </div>
           </n-tab-pane>
 

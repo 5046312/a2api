@@ -24,7 +24,8 @@ const settingKeys = [
   'notificationWebhookEnabled',
   'notificationWebhookUrl',
   'notifyCooldownSec',
-  'temporaryDisableRules'
+  'temporaryDisableRules',
+  'costDisplayDigits'
 ] as const;
 const legacySettingKeys = ['temporaryDisableEnabled'] as const;
 
@@ -54,7 +55,8 @@ export const settingsPayloadSchema = z.object({
   notificationWebhookUrl: z.string().trim().optional(),
   clearNotificationWebhookUrl: z.boolean().optional(),
   notifyCooldownSec: z.number().int().min(0).optional(),
-  temporaryDisableRules: z.array(temporaryDisableRuleSchema).optional()
+  temporaryDisableRules: z.array(temporaryDisableRuleSchema).optional(),
+  costDisplayDigits: z.number().int().min(0).max(12).optional()
 });
 
 export type SettingsPayload = z.infer<typeof settingsPayloadSchema>;
@@ -134,7 +136,8 @@ function snapshotFromConfig(): SettingsSnapshot {
     notificationWebhookUrl: '',
     notificationWebhookUrlMasked: maskSecret(config.notificationWebhookUrl),
     notifyCooldownSec: config.notifyCooldownSec,
-    temporaryDisableRules: config.temporaryDisableRules
+    temporaryDisableRules: config.temporaryDisableRules,
+    costDisplayDigits: config.costDisplayDigits
   };
 }
 
@@ -185,6 +188,7 @@ function applySettings(payload: SettingsPayload): void {
     config.temporaryDisableRules = normalizeTemporaryDisableRules(payload.temporaryDisableRules);
     clearTokenRouterCache();
   }
+  if (payload.costDisplayDigits !== undefined) config.costDisplayDigits = payload.costDisplayDigits;
   if (payload.tokenRouterCacheTtlMs !== undefined) {
     config.tokenRouterCacheTtlMs = payload.tokenRouterCacheTtlMs;
     clearTokenRouterCache();

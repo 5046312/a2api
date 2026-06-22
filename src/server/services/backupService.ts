@@ -92,6 +92,7 @@ const importablePreferenceKeys = [
   'notificationWebhookUrl',
   'notifyCooldownSec',
   'temporaryDisableRules',
+  'costDisplayDigits',
   'monitorSettings'
 ] as const;
 

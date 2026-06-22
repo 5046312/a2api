@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, type Component } from 'vue';
+import { computed, h, onMounted, ref, watch, type Component } from 'vue';
 import { createDiscreteApi, dateZhCN, NIcon, zhCN, type MenuOption } from 'naive-ui';
 import { storeToRefs } from 'pinia';
 import { RouterView, useRoute, useRouter } from 'vue-router';
@@ -20,6 +20,8 @@ import {
   StatsChartOutline
 } from '@vicons/ionicons5';
 import { naiveThemeOverrides } from '@web/naiveTheme';
+import { api } from '@web/api';
+import { setCostDisplayDigits } from '@web/costDisplay';
 import { adminRoutes, routeNameFromValue, type AdminRouteName } from '@web/router';
 import { useAdminSessionStore } from '@web/stores/adminSession';
 
@@ -92,13 +94,27 @@ async function copyServiceBaseUrl() {
   }
 }
 
+async function loadDisplaySettings() {
+  try {
+    const snapshot = await api.getSettings();
+    setCostDisplayDigits(snapshot.costDisplayDigits);
+  } catch {
+    // 设置加载失败时保留默认显示位数，不影响管理端基础使用。
+  }
+}
+
 function logout() {
   session.logout();
   router.push({ name: 'login' });
 }
 
+watch(authed, (value) => {
+  if (value) void loadDisplaySettings();
+});
+
 onMounted(() => {
   void checkBackendService();
+  if (authed.value) void loadDisplaySettings();
 });
 </script>
 
@@ -125,7 +141,9 @@ onMounted(() => {
                   <span class="brand-mark">A2</span>
                   <span>a2api</span>
                 </div>
-                <n-menu :value="currentPage" :options="menuOptions" :root-indent="18" :indent="12" @update:value="changePage" />
+                <n-scrollbar class="sider-menu">
+                  <n-menu :value="currentPage" :options="menuOptions" :root-indent="18" :indent="12" @update:value="changePage" />
+                </n-scrollbar>
                 <div class="sider-footer">
                   <n-button block secondary type="error" @click="logout">
                     退出
@@ -145,7 +163,11 @@ onMounted(() => {
                   </div>
                 </n-layout-header>
                 <n-layout-content class="content">
-                  <RouterView />
+                  <n-scrollbar class="content-scrollbar">
+                    <div class="content-body">
+                      <RouterView />
+                    </div>
+                  </n-scrollbar>
                 </n-layout-content>
               </n-layout>
             </n-layout>

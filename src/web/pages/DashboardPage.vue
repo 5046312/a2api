@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { api, type ModelUsageItem, type StatsOverview, type UpstreamUsageItem } from '@web/api';
+import { formatCostText } from '@web/costDisplay';
 
 const overview = ref<StatsOverview | null>(null);
 const upstreamUsage = ref<UpstreamUsageItem[]>([]);
@@ -20,7 +21,7 @@ const cards = computed(() => {
     { label: '今日请求数', value: data ? formatInteger(data.todayRequests) : '-' },
     { label: '今日成功率', value: data ? formatPercent(data.todaySuccessRate) : '-' },
     { label: '今日用量', value: data ? formatInteger(data.todayTokens) : '-' },
-    { label: '今日费用', value: data ? formatCost(data.todayCost) : '-' },
+    { label: '今日费用', value: data ? formatCostText(data.todayCost, { prefix: '$' }) : '-' },
     { label: '活跃上游账号', value: data ? formatInteger(data.activeAccountCount) : '-' },
     { label: '异常上游账号', value: data ? formatInteger(data.abnormalAccountCount) : '-' }
   ];
@@ -39,10 +40,6 @@ function formatInteger(value: number) {
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatCost(value: number) {
-  return `$${value.toFixed(4)}`;
 }
 
 async function loadOverview() {

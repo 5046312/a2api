@@ -33,6 +33,7 @@ export type AppConfig = {
   notificationWebhookUrl: string;
   notifyCooldownSec: number;
   temporaryDisableRules: TemporaryDisableRule[];
+  costDisplayDigits: number;
 };
 
 function parseNumber(value: string | undefined, fallback: number): number {
@@ -106,7 +107,8 @@ export function buildConfig(env: NodeJS.ProcessEnv): AppConfig {
     notificationWebhookEnabled: parseBoolean(env.WEBHOOK_ENABLED, false),
     notificationWebhookUrl: env.WEBHOOK_URL?.trim() || '',
     notifyCooldownSec: Math.max(0, Math.trunc(parseNumber(env.NOTIFY_COOLDOWN_SEC, 300))),
-    temporaryDisableRules: []
+    temporaryDisableRules: [],
+    costDisplayDigits: 6
   };
 }
 

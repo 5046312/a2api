@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
 import { api, type Account, type CredentialRef, type DownstreamKey, type DownstreamKeyBatchAction, type RouteItem } from '@web/api';
+import { formatCostText } from '@web/costDisplay';
 
 const keys = ref<DownstreamKey[]>([]);
 const selectedKeyIds = ref<number[]>([]);
@@ -137,6 +138,10 @@ function keyPolicySummary(key: DownstreamKey) {
     excludedAccountCount > 0 ? '含排除' : ''
   ].filter(Boolean);
   return parts.join(' / ') || '默认';
+}
+
+function formatCostLimit(value: number | null | undefined) {
+  return formatCostText(value, { emptyText: '不限' });
 }
 
 async function copyKeyValue(key: DownstreamKey) {
@@ -516,7 +521,7 @@ onMounted(loadKeys);
               <td>{{ key.modelScope === 'all' ? '全部' : key.supportedModels.join(', ') || '指定' }}</td>
               <td>{{ keyPolicySummary(key) }}</td>
               <td>{{ key.usedRequests }} / {{ key.maxRequests ?? '不限' }}</td>
-              <td>{{ key.usedCost }} / {{ key.maxCost ?? '不限' }}</td>
+              <td>{{ formatCostText(key.usedCost) }} / {{ formatCostLimit(key.maxCost) }}</td>
               <td>{{ formatTime(key.expiresAt) }}</td>
               <td>{{ formatTime(key.lastUsedAt) }}</td>
               <td>
