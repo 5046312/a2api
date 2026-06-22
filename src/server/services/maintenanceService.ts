@@ -120,6 +120,7 @@ export function clearUsageData(): ClearUsageDataResult {
       lastSelectedAt: null,
       lastFailAt: null,
       consecutiveFailCount: 0,
+      failureResetAt: null,
       cooldownLevel: 0,
       cooldownUntil: null
     })

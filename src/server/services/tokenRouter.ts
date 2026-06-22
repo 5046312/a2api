@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, lte, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { parseJsonObject } from '../shared/json.js';
@@ -51,6 +51,7 @@ export type RouteDecisionCandidate = {
   probability: number;
   available: boolean;
   cooldownUntil: string | null;
+  failureResetAt: string | null;
 };
 
 export type RouteDecision = {
@@ -93,6 +94,8 @@ type CandidateRow = {
   failCount: number;
   consecutiveFailCount: number;
   cooldownUntil: string | null;
+  failureResetAt: string | null;
+  failureResetMinutes: number;
   lastUsedAt: string | null;
   lastSelectedAt: string | null;
   lastFailAt: string | null;
@@ -288,6 +291,7 @@ export async function recordChannelSuccess(channelId: number, latencyMs: number,
     .set({
       successCount: sql`${schema.routeChannels.successCount} + 1`,
       consecutiveFailCount: 0,
+      failureResetAt: null,
       cooldownLevel: 0,
       cooldownUntil: null,
       totalLatencyMs: sql`${schema.routeChannels.totalLatencyMs} + ${latencyMs}`,
@@ -300,17 +304,33 @@ export async function recordChannelSuccess(channelId: number, latencyMs: number,
 }
 
 export async function recordChannelFailure(channelId: number, reason: string, options: ChannelFailureOptions = {}): Promise<void> {
-  const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
+  await resetExpiredChannelFailures();
+  const channel = await db
+    .select({
+      id: schema.routeChannels.id,
+      consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
+      cooldownLevel: schema.routeChannels.cooldownLevel,
+      cooldownUntil: schema.routeChannels.cooldownUntil,
+      failureResetAt: schema.routeChannels.failureResetAt,
+      failureResetMinutes: schema.tokenRoutes.failureResetMinutes
+    })
+    .from(schema.routeChannels)
+    .innerJoin(schema.tokenRoutes, eq(schema.tokenRoutes.id, schema.routeChannels.routeId))
+    .where(eq(schema.routeChannels.id, channelId))
+    .get();
   if (!channel) return;
   const failedAt = nowIso();
   const nextFailCount = channel.consecutiveFailCount + 1;
   const hasTemporaryDisable = !!options.cooldownUntil;
   const cooldownUntil = options.cooldownUntil ?? channel.cooldownUntil;
+  const failureResetAt = channel.failureResetAt
+    || (channel.consecutiveFailCount === 0 ? buildFailureResetAt(failedAt, channel.failureResetMinutes) : null);
   await db
     .update(schema.routeChannels)
     .set({
       failCount: sql`${schema.routeChannels.failCount} + 1`,
       consecutiveFailCount: nextFailCount,
+      failureResetAt,
       // 只有系统临时禁用规则命中后才持久冷却；普通失败只影响本次请求排除和后续失败惩罚。
       cooldownLevel: hasTemporaryDisable ? Math.min(3, nextFailCount) : channel.cooldownLevel,
       cooldownUntil,
@@ -332,7 +352,24 @@ export async function recordChannelFailure(channelId: number, reason: string, op
   }).run();
 }
 
+export async function resetExpiredChannelFailures(): Promise<number> {
+  const result = await db
+    .update(schema.routeChannels)
+    .set({
+      consecutiveFailCount: 0,
+      failureResetAt: null
+    })
+    .where(and(
+      sql`${schema.routeChannels.failureResetAt} IS NOT NULL`,
+      lte(schema.routeChannels.failureResetAt, nowIso())
+    ))
+    .run();
+  if (result.changes > 0) clearTokenRouterCache();
+  return result.changes;
+}
+
 async function loadCandidateRows(): Promise<CandidateRow[]> {
+  await resetExpiredChannelFailures();
   const now = Date.now();
   if (candidateRowsCache && candidateRowsCache.expiresAt > now) {
     return candidateRowsCache.rows;
@@ -362,6 +399,8 @@ async function loadCandidateRowsFromDb(): Promise<CandidateRow[]> {
       failCount: schema.routeChannels.failCount,
       consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
       cooldownUntil: schema.routeChannels.cooldownUntil,
+      failureResetAt: schema.routeChannels.failureResetAt,
+      failureResetMinutes: schema.tokenRoutes.failureResetMinutes,
       lastUsedAt: schema.routeChannels.lastUsedAt,
       lastSelectedAt: schema.routeChannels.lastSelectedAt,
       lastFailAt: schema.routeChannels.lastFailAt,
@@ -463,8 +502,14 @@ function buildDecisionCandidate(
     score,
     probability: 0,
     available,
-    cooldownUntil: row.cooldownUntil
+    cooldownUntil: row.cooldownUntil,
+    failureResetAt: row.failureResetAt
   };
+}
+
+function buildFailureResetAt(failedAt: string, minutes: number): string | null {
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  return new Date(Date.parse(failedAt) + Math.trunc(minutes) * 60_000).toISOString();
 }
 
 function applyDecisionProbability(

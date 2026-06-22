@@ -11,7 +11,7 @@ import {
   replaceRouteGroupSources
 } from '../../services/routeDecisionSnapshotService.js';
 import { getDownstreamKeyPolicyById } from '../../services/downstreamKeyService.js';
-import { clearTokenRouterCache, explainRouteDecision } from '../../services/tokenRouter.js';
+import { clearTokenRouterCache, explainRouteDecision, resetExpiredChannelFailures } from '../../services/tokenRouter.js';
 import { sendError } from '../../shared/errors.js';
 import { nowIso } from '../../shared/time.js';
 
@@ -112,6 +112,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
         displayName: schema.tokenRoutes.displayName,
         routeMode: schema.tokenRoutes.routeMode,
         routingStrategy: schema.tokenRoutes.routingStrategy,
+        failureResetMinutes: schema.tokenRoutes.failureResetMinutes,
         enabled: schema.tokenRoutes.enabled,
         manualOverride: schema.tokenRoutes.manualOverride,
         createdAt: schema.tokenRoutes.createdAt,
@@ -139,14 +140,20 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
     const params = idParamsSchema.parse(request.params);
     const parsed = z.object({
       enabled: z.boolean().optional(),
-      routingStrategy: routingStrategySchema.optional()
-    }).refine((value) => value.enabled !== undefined || value.routingStrategy !== undefined, {
-      message: 'enabled or routingStrategy is required'
+      routingStrategy: routingStrategySchema.optional(),
+      failureResetMinutes: z.number().int().min(0).optional()
+    }).refine((value) => (
+      value.enabled !== undefined
+      || value.routingStrategy !== undefined
+      || value.failureResetMinutes !== undefined
+    ), {
+      message: 'enabled, routingStrategy or failureResetMinutes is required'
     }).safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'validation_error', parsed.error.message, 'invalid_payload');
-    const values: { enabled?: boolean; routingStrategy?: string; updatedAt: string } = { updatedAt: nowIso() };
+    const values: { enabled?: boolean; routingStrategy?: string; failureResetMinutes?: number; updatedAt: string } = { updatedAt: nowIso() };
     if (parsed.data.enabled !== undefined) values.enabled = parsed.data.enabled;
     if (parsed.data.routingStrategy !== undefined) values.routingStrategy = parsed.data.routingStrategy;
+    if (parsed.data.failureResetMinutes !== undefined) values.failureResetMinutes = parsed.data.failureResetMinutes;
     const updated = await db
       .update(schema.tokenRoutes)
       .set(values)
@@ -154,12 +161,25 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       .returning()
       .get();
     if (!updated) return sendError(reply, 404, 'validation_error', 'Model not found', 'route_not_found');
+    if (parsed.data.failureResetMinutes === 0) {
+      await db
+        .update(schema.routeChannels)
+        .set({ failureResetAt: null })
+        .where(eq(schema.routeChannels.routeId, params.id))
+        .run();
+    }
     clearTokenRouterCache();
     return updated;
   });
 
   app.get('/api/routes/:id/channels', async (request) => {
     const params = idParamsSchema.parse(request.params);
+    await resetExpiredChannelFailures();
+    const route = await db
+      .select({ failureResetMinutes: schema.tokenRoutes.failureResetMinutes })
+      .from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, params.id))
+      .get();
     const rows = await db
       .select({
         id: schema.routeChannels.id,
@@ -171,6 +191,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
         enabled: schema.routeChannels.enabled,
         successCount: schema.routeChannels.successCount,
         failCount: schema.routeChannels.failCount,
+        failureResetAt: schema.routeChannels.failureResetAt,
         cooldownUntil: schema.routeChannels.cooldownUntil,
         lastFailAt: schema.routeChannels.lastFailAt,
         accountName: schema.accounts.username,
@@ -207,7 +228,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
       ...row,
       lastFailureReason: latestFailureByChannel.get(row.id) ?? null
     }));
-    return { items, total: items.length };
+    return { items, total: items.length, failureResetMinutes: route?.failureResetMinutes ?? 0 };
   });
 
   app.put('/api/routes/:id/channels/:channelId', async (request, reply) => {
@@ -293,7 +314,7 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
     const params = idParamsSchema.parse(request.params);
     const result = await db
       .update(schema.routeChannels)
-      .set({ cooldownUntil: null, cooldownLevel: 0, consecutiveFailCount: 0 })
+      .set({ cooldownUntil: null, cooldownLevel: 0, consecutiveFailCount: 0, failureResetAt: null })
       .where(eq(schema.routeChannels.routeId, params.id))
       .run();
     if (result.changes === 0) return sendError(reply, 404, 'validation_error', 'Model not found', 'route_not_found');
@@ -311,9 +332,24 @@ export async function tokenRoutesRoutes(app: FastifyInstance): Promise<void> {
     if (!route) return sendError(reply, 404, 'validation_error', 'Model not found', 'route_not_found');
     const result = await db
       .update(schema.routeChannels)
-      .set({ consecutiveFailCount: 0 })
+      .set({ consecutiveFailCount: 0, failureResetAt: null })
       .where(eq(schema.routeChannels.routeId, params.id))
       .run();
+    clearTokenRouterCache();
+    return { ok: true, reset: result.changes };
+  });
+
+  app.post('/api/routes/:id/channels/:channelId/scores/reset', async (request, reply) => {
+    const params = channelParamsSchema.parse(request.params);
+    const result = await db
+      .update(schema.routeChannels)
+      .set({ consecutiveFailCount: 0, failureResetAt: null })
+      .where(and(
+        eq(schema.routeChannels.id, params.channelId),
+        eq(schema.routeChannels.routeId, params.id)
+      ))
+      .run();
+    if (result.changes === 0) return sendError(reply, 404, 'validation_error', 'Channel not found', 'route_channel_not_found');
     clearTokenRouterCache();
     return { ok: true, reset: result.changes };
   });

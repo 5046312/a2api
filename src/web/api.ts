@@ -160,6 +160,7 @@ export type RouteItem = {
   displayName: string | null;
   routeMode: string;
   routingStrategy: string;
+  failureResetMinutes: number;
   enabled: boolean;
   channelCount: number;
   averageCost: number;
@@ -196,6 +197,7 @@ export type RouteChannel = {
   enabled: boolean;
   successCount: number;
   failCount: number;
+  failureResetAt: string | null;
   cooldownUntil: string | null;
   lastFailAt: string | null;
   lastFailureReason: string | null;
@@ -218,6 +220,7 @@ export type RouteDecisionCandidate = {
   probability: number;
   available: boolean;
   cooldownUntil: string | null;
+  failureResetAt: string | null;
 };
 
 export type RouteDecision = {
@@ -891,7 +894,7 @@ export const api = {
   listRoutesSummary: () => apiRequest<RouteSummaryItem[]>('/api/routes/summary'),
   updateRoute: (id: number, body: unknown) => apiRequest(`/api/routes/${id}`, { method: 'PUT', body }),
   rebuildRoutes: () => apiRequest('/api/routes/rebuild', { method: 'POST' }),
-  listRouteChannels: (id: number) => apiRequest<{ items: RouteChannel[]; total: number }>(`/api/routes/${id}/channels`),
+  listRouteChannels: (id: number) => apiRequest<{ items: RouteChannel[]; total: number; failureResetMinutes: number }>(`/api/routes/${id}/channels`),
   updateRouteChannel: (routeId: number, channelId: number, body: unknown) =>
     apiRequest<RouteChannel>(`/api/routes/${routeId}/channels/${channelId}`, { method: 'PUT', body }),
   explainRouteDecision: (id: number, model: string, options: { downstreamApiKeyId?: number; forcedChannelId?: number } = {}) =>
@@ -906,6 +909,8 @@ export const api = {
   refreshRouteSnapshot: (id: number, model?: string) =>
     apiRequest<RouteDecisionSnapshot>(`/api/routes/${id}/snapshot/refresh`, { method: 'POST', body: { model } }),
   resetRouteScores: (id: number) => apiRequest<{ ok: boolean; reset: number }>(`/api/routes/${id}/scores/reset`, { method: 'POST' }),
+  resetRouteChannelScore: (routeId: number, channelId: number) =>
+    apiRequest<{ ok: boolean; reset: number }>(`/api/routes/${routeId}/channels/${channelId}/scores/reset`, { method: 'POST' }),
   listRouteGroupSources: (id: number) =>
     apiRequest<{ items: RouteGroupSource[]; total: number }>(`/api/routes/${id}/group-sources`),
   updateRouteGroupSources: (id: number, sourceRouteIds: number[]) =>

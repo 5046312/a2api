@@ -13,13 +13,16 @@ const selectedRoute = ref<RouteItem | null>(null);
 const channelDrawerVisible = ref(false);
 const loading = ref(false);
 const savingStrategy = ref(false);
+const savingFailureResetCycle = ref(false);
 const savingChannelId = ref<number | null>(null);
-const resettingScores = ref(false);
+const resettingChannelId = ref<number | null>(null);
 const error = ref('');
 const message = ref('');
 const now = ref(Date.now());
 const channelPriorityDrafts = ref<Record<number, number | null>>({});
 const channelWeightDrafts = ref<Record<number, number | null>>({});
+const failureResetMinutesDraft = ref<number | null>(0);
+const refreshingExpiredFailureReset = ref(false);
 let cooldownTimer: ReturnType<typeof window.setInterval> | null = null;
 const notice = useMessage();
 const router = useRouter();
@@ -61,7 +64,14 @@ const routingStrategyMeta: Record<RoutingStrategy, { label: string; description:
     description: '先按优先级筛选，再选择最久未被命中的通道；从未命中过的通道优先。'
   }
 };
-const hasCoolingChannel = computed(() => channels.value.some((channel) => isCooling(channel)));
+const hasLiveCountdown = computed(() => (
+  channels.value.some((channel) => isFutureTime(channel.cooldownUntil) || isFutureTime(channel.failureResetAt))
+  || (decision.value?.candidates.some((candidate) => isFutureTime(candidate.failureResetAt)) ?? false)
+));
+const hasExpiredFailureReset = computed(() => (
+  channels.value.some((channel) => isExpiredTime(channel.failureResetAt))
+  || (decision.value?.candidates.some((candidate) => candidate.consecutiveFailCount > 0 && isExpiredTime(candidate.failureResetAt)) ?? false)
+));
 const strategyAlert = computed(() => {
   if (routeStrategy.value === 'stable_first') {
     return {
@@ -89,7 +99,11 @@ watch(error, (value) => {
   if (value) notice.error(value);
 });
 
-watch(hasCoolingChannel, syncCooldownTimer);
+watch(hasLiveCountdown, syncCooldownTimer);
+
+watch(hasExpiredFailureReset, (expired) => {
+  if (expired) void refreshExpiredFailureReset();
+});
 
 function normalizeRoutingStrategy(value: string | null | undefined): RoutingStrategy {
   if (value === 'stable_first') return 'stable_first';
@@ -125,23 +139,51 @@ function formatCost(value: number | null | undefined) {
   return formatCostText(value, { prefix: '$', emptyWhenZero: true });
 }
 
-function isCooling(channel: RouteChannel) {
-  if (!channel.cooldownUntil) return false;
-  const cooldownAt = Date.parse(channel.cooldownUntil);
-  return !Number.isNaN(cooldownAt) && cooldownAt > now.value;
+function normalizeFailureResetMinutes(value: number | null | undefined) {
+  return Math.max(0, Math.trunc(Number(value) || 0));
 }
 
-function formatCooldown(channel: RouteChannel) {
-  if (!channel.cooldownUntil) return '-';
-  const cooldownAt = Date.parse(channel.cooldownUntil);
-  if (Number.isNaN(cooldownAt)) return '-';
-  const remainingMs = cooldownAt - now.value;
-  if (remainingMs <= 0) return '已结束';
+function formatSuccessRate(successCount: number, failCount: number) {
+  const totalCount = successCount + failCount;
+  if (totalCount <= 0) return '-';
+  return `${((successCount / totalCount) * 100).toFixed(1)}%`;
+}
+
+function successFailureDetail(successCount: number, failCount: number) {
+  return `成功/失败：${successCount} / ${failCount}`;
+}
+
+function isFutureTime(value: string | null | undefined) {
+  if (!value) return false;
+  const parsed = Date.parse(value);
+  return !Number.isNaN(parsed) && parsed > now.value;
+}
+
+function isExpiredTime(value: string | null | undefined) {
+  if (!value) return false;
+  const parsed = Date.parse(value);
+  return !Number.isNaN(parsed) && parsed <= now.value;
+}
+
+function formatRemainingTime(value: string | null | undefined, expiredText: string) {
+  if (!value) return '-';
+  const targetAt = Date.parse(value);
+  if (Number.isNaN(targetAt)) return '-';
+  const remainingMs = targetAt - now.value;
+  if (remainingMs <= 0) return expiredText;
   const totalSeconds = Math.ceil(remainingMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}秒`;
   return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+}
+
+function formatCooldown(channel: RouteChannel) {
+  return formatRemainingTime(channel.cooldownUntil, '已结束');
+}
+
+function formatFailureReset(value: string | null | undefined) {
+  return formatRemainingTime(value, '已到期');
 }
 
 function cooldownDetail(channel: RouteChannel) {
@@ -164,6 +206,10 @@ function syncChannelDrafts(items: RouteChannel[]) {
   channelWeightDrafts.value = weightDrafts;
 }
 
+function syncRouteDraft(route: RouteItem | null) {
+  failureResetMinutesDraft.value = normalizeFailureResetMinutes(route?.failureResetMinutes);
+}
+
 function normalizePriorityValue(value: number | null | undefined) {
   return Math.max(0, Math.trunc(Number(value) || 0));
 }
@@ -179,14 +225,25 @@ function formatDecisionScoreFormula(candidate: RouteDecision['candidates'][numbe
 }
 
 function syncCooldownTimer() {
-  if (hasCoolingChannel.value && !cooldownTimer) {
+  if (hasLiveCountdown.value && !cooldownTimer) {
     cooldownTimer = window.setInterval(() => {
       now.value = Date.now();
     }, 1000);
   }
-  if (!hasCoolingChannel.value && cooldownTimer) {
+  if (!hasLiveCountdown.value && cooldownTimer) {
     window.clearInterval(cooldownTimer);
     cooldownTimer = null;
+  }
+}
+
+async function refreshExpiredFailureReset() {
+  if (!selectedRoute.value || refreshingExpiredFailureReset.value) return;
+  refreshingExpiredFailureReset.value = true;
+  try {
+    await selectRoute(selectedRoute.value);
+    await explainRoute(selectedRoute.value);
+  } finally {
+    refreshingExpiredFailureReset.value = false;
   }
 }
 
@@ -203,8 +260,10 @@ async function loadRoutes() {
         decision.value = null;
         channelDrawerVisible.value = false;
         syncChannelDrafts([]);
+        syncRouteDraft(null);
       } else {
         routeStrategy.value = normalizeRoutingStrategy(selectedRoute.value.routingStrategy);
+        syncRouteDraft(selectedRoute.value);
       }
     }
   } catch (err) {
@@ -229,12 +288,15 @@ async function toggleRoute(route: RouteItem) {
 async function selectRoute(route: RouteItem) {
   selectedRoute.value = route;
   routeStrategy.value = normalizeRoutingStrategy(route.routingStrategy);
+  syncRouteDraft(route);
   now.value = Date.now();
   channels.value = [];
   decision.value = null;
   error.value = '';
   try {
     const data = await api.listRouteChannels(route.id);
+    route.failureResetMinutes = data.failureResetMinutes;
+    syncRouteDraft(route);
     channels.value = data.items;
     syncChannelDrafts(data.items);
   } catch (err) {
@@ -256,6 +318,38 @@ async function saveRouteStrategy(route = selectedRoute.value) {
     setError(err, '保存调用策略失败');
   } finally {
     savingStrategy.value = false;
+  }
+}
+
+async function saveFailureResetCycle(route = selectedRoute.value, options: { silent?: boolean } = {}) {
+  if (!route) return false;
+  const nextValue = normalizeFailureResetMinutes(failureResetMinutesDraft.value);
+  failureResetMinutesDraft.value = nextValue;
+  if (route.failureResetMinutes === nextValue) return true;
+  savingFailureResetCycle.value = true;
+  error.value = '';
+  if (!options.silent) message.value = '';
+  try {
+    await api.updateRoute(route.id, { failureResetMinutes: nextValue });
+    route.failureResetMinutes = nextValue;
+    const routeInList = routes.value.find((item) => item.id === route.id);
+    if (routeInList) routeInList.failureResetMinutes = nextValue;
+    if (nextValue === 0) {
+      channels.value = channels.value.map((channel) => ({ ...channel, failureResetAt: null }));
+      if (decision.value) {
+        decision.value = {
+          ...decision.value,
+          candidates: decision.value.candidates.map((candidate) => ({ ...candidate, failureResetAt: null }))
+        };
+      }
+    }
+    if (!options.silent) message.value = '失败重置周期已保存';
+    return true;
+  } catch (err) {
+    setError(err, '保存失败重置周期失败');
+    return false;
+  } finally {
+    savingFailureResetCycle.value = false;
   }
 }
 
@@ -326,20 +420,22 @@ async function explainRoute(route = selectedRoute.value) {
   }
 }
 
-async function resetRouteScores(route = selectedRoute.value) {
+async function resetRouteChannelScore(candidate: RouteDecision['candidates'][number], route = selectedRoute.value) {
   if (!route) return;
-  resettingScores.value = true;
+  const saved = await saveFailureResetCycle(route, { silent: true });
+  if (!saved) return;
+  resettingChannelId.value = candidate.channelId;
   error.value = '';
   message.value = '';
   try {
-    await api.resetRouteScores(route.id);
-    message.value = '分数已重置';
+    await api.resetRouteChannelScore(route.id, candidate.channelId);
+    message.value = '失败次数已重置';
     await selectRoute(route);
     await explainRoute(route);
   } catch (err) {
-    setError(err, '重置分数失败');
+    setError(err, '重置失败次数失败');
   } finally {
-    resettingScores.value = false;
+    resettingChannelId.value = null;
   }
 }
 
@@ -400,7 +496,7 @@ onBeforeUnmount(() => {
               <th>策略</th>
               <th>通道</th>
               <th>平均成本</th>
-              <th>成功/失败</th>
+              <th>成功率</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
@@ -433,7 +529,14 @@ onBeforeUnmount(() => {
               </td>
               <td>{{ route.channelCount }}</td>
               <td class="mono">{{ formatCost(route.averageCost) }}</td>
-              <td>{{ route.successCount }} / {{ route.failCount }}</td>
+              <td class="mono">
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <span>{{ formatSuccessRate(route.successCount, route.failCount) }}</span>
+                  </template>
+                  <span class="tooltip-text">{{ successFailureDetail(route.successCount, route.failCount) }}</span>
+                </n-tooltip>
+              </td>
               <td>
                 <n-tag size="small" :type="route.enabled ? 'success' : 'error'">{{ route.enabled ? '启用' : '停用' }}</n-tag>
               </td>
@@ -488,7 +591,7 @@ onBeforeUnmount(() => {
                   <th>优先级（越小越优先）</th>
                   <th>权重（越大概率越高）</th>
                   <th>冷却</th>
-                  <th>成功/失败</th>
+                  <th>成功率</th>
                   <th>状态</th>
                   <th>操作</th>
                 </tr>
@@ -528,7 +631,14 @@ onBeforeUnmount(() => {
                       </n-tooltip>
                     </span>
                   </td>
-                  <td>{{ channel.successCount }} / {{ channel.failCount }}</td>
+                  <td class="mono">
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <span>{{ formatSuccessRate(channel.successCount, channel.failCount) }}</span>
+                      </template>
+                      <span class="tooltip-text">{{ successFailureDetail(channel.successCount, channel.failCount) }}</span>
+                    </n-tooltip>
+                  </td>
                   <td>
                     <n-switch
                       :value="channel.enabled"
@@ -554,12 +664,19 @@ onBeforeUnmount(() => {
             <div class="panel-header">
               <div>
                 <h2>决策解释</h2>
-                <p class="muted">{{ decision ? `${decision.requestedModel} -> ${decision.actualModel}` : '选择模型后查看候选、失败次数、分数和概率' }}</p>
+                <p class="muted">{{ decision ? `${decision.requestedModel} -> ${decision.actualModel}` : '选择模型后查看候选、失败次数、重试时间、分数和概率' }}</p>
               </div>
               <div class="actions">
-                <n-button secondary attr-type="button" :disabled="!selectedRoute || resettingScores" @click="resetRouteScores()">
-                  {{ resettingScores ? '重置中' : '重置分数' }}
-                </n-button>
+                <label class="field failure-reset-field">
+                  <span>失败重置周期：分钟</span>
+                  <n-input-number
+                    v-model:value="failureResetMinutesDraft"
+                    size="small"
+                    :min="0"
+                    :disabled="!selectedRoute || savingFailureResetCycle || resettingChannelId !== null"
+                    @blur="saveFailureResetCycle()"
+                  />
+                </label>
                 <n-button secondary attr-type="button" :disabled="!selectedRoute" @click="explainRoute()">刷新</n-button>
               </div>
             </div>
@@ -573,6 +690,7 @@ onBeforeUnmount(() => {
                       <th>优先级</th>
                       <th>权重</th>
                       <th>失败次数</th>
+                      <th>重试时间</th>
                       <th>
                         <span class="label-with-help">
                           <span>分数</span>
@@ -593,7 +711,21 @@ onBeforeUnmount(() => {
                       <td>{{ candidate.accountName || candidate.accountId }}</td>
                       <td>{{ candidate.priority }}</td>
                       <td>{{ candidate.weight }}</td>
-                      <td>{{ candidate.consecutiveFailCount }}</td>
+                      <td>
+                        <span class="failure-count-cell">
+                          <span>{{ candidate.consecutiveFailCount }}</span>
+                          <n-button
+                            text
+                            size="tiny"
+                            attr-type="button"
+                            :disabled="resettingChannelId !== null || savingFailureResetCycle"
+                            @click="resetRouteChannelScore(candidate)"
+                          >
+                            {{ resettingChannelId === candidate.channelId ? '重置中' : '重置' }}
+                          </n-button>
+                        </span>
+                      </td>
+                      <td class="mono">{{ formatFailureReset(candidate.failureResetAt) }}</td>
                       <td>
                         <n-tooltip trigger="hover">
                           <template #trigger>
@@ -610,7 +742,7 @@ onBeforeUnmount(() => {
                       </td>
                     </tr>
                     <tr v-if="decision.candidates.length === 0">
-                      <td class="empty" colspan="7">暂无候选</td>
+                      <td class="empty" colspan="8">暂无候选</td>
                     </tr>
                   </tbody>
                 </n-table>
@@ -638,6 +770,23 @@ onBeforeUnmount(() => {
 
 .strategy-save-button {
   flex-shrink: 0;
+}
+
+.failure-reset-field {
+  width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.failure-reset-field > span {
+  flex-shrink: 0;
+}
+
+.failure-count-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .cooldown-cell {

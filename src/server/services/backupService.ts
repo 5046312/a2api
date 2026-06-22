@@ -425,6 +425,7 @@ function importTokenRoutes(rowsToImport: TokenRouteRow[], routeIdMap: Map<number
             displayName: row.displayName,
             modelMapping: row.modelMapping,
             routingStrategy: row.routingStrategy,
+            failureResetMinutes: row.failureResetMinutes ?? existing.failureResetMinutes,
             enabled: row.enabled,
             updatedAt: now
           })

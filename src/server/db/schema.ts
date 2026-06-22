@@ -104,6 +104,7 @@ export const tokenRoutes = sqliteTable(
     routeMode: text('route_mode').notNull().default('exact'),
     modelMapping: text('model_mapping'),
     routingStrategy: text('routing_strategy').notNull().default('weighted'),
+    failureResetMinutes: integer('failure_reset_minutes').notNull().default(0),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     manualOverride: integer('manual_override', { mode: 'boolean' }).notNull().default(false),
     createdAt: text('created_at').notNull(),
@@ -135,6 +136,7 @@ export const routeChannels = sqliteTable(
     lastSelectedAt: text('last_selected_at'),
     lastFailAt: text('last_fail_at'),
     consecutiveFailCount: integer('consecutive_fail_count').notNull().default(0),
+    failureResetAt: text('failure_reset_at'),
     cooldownLevel: integer('cooldown_level').notNull().default(0),
     cooldownUntil: text('cooldown_until')
   },

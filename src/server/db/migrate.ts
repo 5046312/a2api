@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS token_routes (
   route_mode TEXT NOT NULL DEFAULT 'exact',
   model_mapping TEXT,
   routing_strategy TEXT NOT NULL DEFAULT 'weighted',
+  failure_reset_minutes INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   manual_override INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
@@ -111,6 +112,7 @@ CREATE TABLE IF NOT EXISTS route_channels (
   last_selected_at TEXT,
   last_fail_at TEXT,
   consecutive_fail_count INTEGER NOT NULL DEFAULT 0,
+  failure_reset_at TEXT,
   cooldown_level INTEGER NOT NULL DEFAULT 0,
   cooldown_until TEXT
 );
@@ -355,6 +357,7 @@ CREATE INDEX IF NOT EXISTS accounts_platform_status_idx ON accounts(platform, st
 `);
   ensureColumn('proxy_logs', 'debug_trace_id', 'ALTER TABLE proxy_logs ADD COLUMN debug_trace_id INTEGER');
   ensureColumn('token_routes', 'routing_strategy', "ALTER TABLE token_routes ADD COLUMN routing_strategy TEXT NOT NULL DEFAULT 'weighted'");
+  ensureColumn('token_routes', 'failure_reset_minutes', 'ALTER TABLE token_routes ADD COLUMN failure_reset_minutes INTEGER NOT NULL DEFAULT 0');
   ensureRouteChannelRuntimeColumns();
   ensureProxyDebugAttemptCompatibility();
   ensureColumn('proxy_video_tasks', 'upstream_url', "ALTER TABLE proxy_video_tasks ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''");
@@ -378,6 +381,7 @@ function ensureRouteChannelRuntimeColumns(): void {
   ensureColumn('route_channels', 'last_used_at', 'ALTER TABLE route_channels ADD COLUMN last_used_at TEXT');
   ensureColumn('route_channels', 'last_selected_at', 'ALTER TABLE route_channels ADD COLUMN last_selected_at TEXT');
   ensureColumn('route_channels', 'last_fail_at', 'ALTER TABLE route_channels ADD COLUMN last_fail_at TEXT');
+  ensureColumn('route_channels', 'failure_reset_at', 'ALTER TABLE route_channels ADD COLUMN failure_reset_at TEXT');
 }
 
 function ensureColumn(table: string, column: string, statement: string): void {
