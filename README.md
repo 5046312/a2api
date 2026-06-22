@@ -1,97 +1,90 @@
-# a2api
+<p align="center">
+  <img src="./docs/icon.svg" width="120" height="120" alt="a2api icon">
+</p>
 
-TypeScript AI API aggregation proxy with Fastify, SQLite, and Vue + Naive UI admin UI.
+<h1 align="center">a2api</h1>
 
-## Scope
+<p align="center">
+  Self-hosted AI API aggregation proxy with model routing, admin operations, and OpenAI / Claude / Gemini compatible endpoints.
+</p>
 
-P0 implemented:
+<p align="center">
+  <a href="./README.zh-CN.md">简体中文</a> |
+  <a href="./README.md">English</a>
+</p>
 
-- Fastify server and Vite Vue + Naive UI admin UI.
-- Vue DevTools Vite plugin is enabled for local frontend debugging.
-- Vue Router page routing and Pinia-backed admin session state.
-- Fastify serves the built admin UI with history fallback for Vue Router paths.
-- SQLite schema and startup migration.
-- Admin auth and proxy auth.
-- Admin auth failure rate limit with `Retry-After`.
-- Unified upstream account management for API endpoint, API Key, platform, models, downstream keys, and proxy logs.
-- Upstream account create and edit right-side drawer UI for API endpoint, API Key, platform, authentication mode, account-level proxy, unit cost, status, pinned state, and sort order.
-- Upstream account default model-cost drawer with provider tabs, editable model costs, USD storage, and RMB display/input conversion.
-- Upstream account model drawer for fixed account model lists, per-model cost editing and default-cost reset, upstream model preview selection with default cost prefill, and automatic route rebuild after model changes.
-- Upstream account batch enable/disable/delete and selected balance refresh from the admin UI.
-- Upstream account API Key is stored on the account; legacy key-list rows are only read as old-data fallback and are not used to generate model channels.
-- Downstream key policy controls for model scope, upstream account authorization, exclusions, and batch operations.
-- Downstream key request and cost usage accounting, with upstream account `unitCost` used for usage-based cost estimates from non-stream JSON usage or stream SSE usage, plus admin usage reset.
-- Downstream key list keeps masked values in bulk responses and supports on-demand full-key copy from the key column.
-- Upstream account-level proxy configuration stored per upstream account.
-- Legacy account key-list compatibility is kept internally for old imports; the admin UI uses upstream accounts only.
-- Dedicated platform adapters for OneHub, DoneHub, Veloera, AnyRouter, CliProxyAPI, and Claude model discovery.
-- Manual, batch, and scheduled upstream account balance refresh, with failures recorded as events without marking upstream accounts expired.
-- Scheduled proxy log cleanup controlled by cron and retention days.
-- Proxy log filters by request ID, status, model, upstream account, downstream key, stream flag, and time range, with paginated admin tables and range-based reset.
-- Proxy requests insert a `pending` log row as soon as backend routing starts, then update the same row to the final result after upstream completion.
-- Proxy logs record upstream usage from non-stream `usage` fields and stream SSE terminal usage; if the upstream does not return usage, token and cost fields remain 0.
-- Failure logs show failed channel attempts from debug trace attempts, including requests that later succeeded after failover.
-- Proxy log detail view uses the debug trace ID as the admin request ID, and shows request summary, final result, billing, retry, error, trigger-time channel strategy, selected-channel score percentage, hoverable same-priority-bucket probability snapshot with a pie chart and fixed 12 o'clock hit pointer, and channel attempt fields.
-- Proxy debug trace writes an attempt row before each real upstream fetch starts, then updates that same row with the response or failure result, including repeated retries against the same upstream account.
-- Runtime settings snapshot and tabbed editing for proxy, allowlist, timeout, retry, default model strategy, route cache TTL, temporary channel-disable rules, balance refresh cron, log cleanup, and system proxy testing.
-- Runtime settings compatibility APIs for `/api/settings/runtime`, `/api/settings/brand-list`, and SQLite runtime database status.
-- Maintenance APIs for clearing runtime caches and usage data.
-- Native upstream account availability monitor with scheduler, heartbeats, uptime windows, manual checks, and notification events.
-- Webhook notification settings page and test send endpoint, with empty URL preserving the saved secret and explicit clear support.
-- System events and program logs pages with filters, unread count, mark-read, load-more, and clear operations.
-- In-memory background task registry and `GET /api/tasks` status APIs for later async operations.
-- About page with version, current stack, shipped capabilities, and deferred operations scope.
-- OAuth provider discovery, local session start/status/manual callback, callback entry, credential JSON import, local refresh/quota endpoints, and admin page.
-- OAuth upstream account list, enable/disable, refresh/quota, import, and delete APIs, surfaced in the admin UI.
-- Stats overview API and dashboard cards for today's requests, success rate, tokens, cost, active upstreams, and abnormal upstream accounts.
-- Upstream usage, model usage, and model marketplace stats APIs, including minimum and average model costs, surfaced in dashboard and model marketplace pages.
-- Model decision explanation for channel candidates, consecutive failures, scores, probabilities, and availability status.
-- Model lite and summary APIs for selector and first-screen model data.
-- Decision snapshot and group-source APIs remain available for backend compatibility, but are not surfaced in the model admin page.
-- Model strategy editing, channel priority / weight / enabled-state auto-save, score penalty reset, and cooldown clearing from the admin UI.
-- Admin model tester page backed by `POST /api/test/chat` for non-stream Chat testing through the same proxy routing core, with optional downstream key policy, forced channel selection, model explanation, and debug trace detail.
-- JSON backup export/import for upstream accounts, preferences, or all data.
-- OpenAI-compatible `/v1/models`.
-- OpenAI-compatible `/v1/chat/completions` with non-stream and stream forwarding.
-- Root alias `POST /chat/completions` for clients that do not send `/v1`.
-- OpenAI Responses `/v1/responses` pass-through with non-stream and stream forwarding.
-- Initial `/v1/responses/compact` non-stream support, backed by `/v1/responses` and returned as compact response shape.
-- Root Responses aliases `/responses` and `/responses/compact`.
-- Initial Claude Messages `/v1/messages` pass-through with Anthropic headers and stream forwarding.
-- Initial Claude `/v1/messages/count_tokens` pass-through with token-counting beta and non-stream forwarding.
-- Initial OpenAI-compatible `/v1/completions` legacy pass-through with non-stream and stream forwarding.
-- Initial OpenAI-compatible `/v1/embeddings` non-stream pass-through.
-- Initial OpenAI-compatible Files API with DB-backed multipart upload, list, detail, content, and soft delete.
-- Initial OpenAI-compatible `/v1/images/generations` JSON, `/v1/images/edits` multipart, and `/v1/images/variations` multipart non-stream pass-through.
-- Initial OpenAI-compatible `/v1/search` non-stream pass-through with `__search` default routing model.
-- Initial OpenAI-compatible `/v1/videos` create/poll/delete pass-through with local task ID mapping.
-- Initial Gemini-compatible `/v1beta/models`, non-stream `generateContent`, SSE `streamGenerateContent`, and explicit `countTokens` 501 response for OpenAI-compatible upstreams.
-- Initial OAuth local session/manual callback/import/refresh/quota support, plus OAuth upstream account connection list, enable/disable, and delete APIs, surfaced in the admin UI.
-- WebDAV backup config, manual import/export, and scheduled export.
-- External client config snippets for OpenAI-compatible clients, Cherry Studio, Roo/Kilo Code, Claude Code, Codex CLI, Claude Code Router, and CC Switch.
-- Maintenance factory reset for clearing runtime business data while preserving environment credentials and database path.
-- Native monitor page for upstream account status, heartbeat bars, uptime, manual checks, and monitor settings.
-- Automatic model rebuild, channel cooldown, failover, and proxy log writes.
-- Docker Compose service mode.
-- Tauri v2 desktop shell with local Fastify sidecar, dynamic localhost port, desktop data directory, tray open/restart/quit actions, and token injection for local admin login.
+## What is a2api?
 
-Remaining P2/P3 areas are intentionally not folded into this first implementation: Gemini native `countTokens` compatibility, Search web-search simulation, full provider-native OAuth token exchange, persistent OAuth sessions, rebind flow, provider-specific quota semantics, full route group runtime expansion, multi-database runtime, automatic desktop updates, signing/notarization, cross-platform CI release pipeline, and advanced analytics.
+a2api lets you place multiple upstream AI accounts behind one local service. It provides a Fastify proxy, a SQLite-backed control plane, and a Vue + Naive UI admin console for operating upstream accounts, downstream keys, model routing, logs, monitoring, settings, OAuth imports, and backups.
 
-## Commands
+The project is built for private deployment and local operations. It focuses on deterministic routing and observable failover instead of automatic sign-in or check-in workflows.
+
+## Highlights
+
+- One downstream endpoint for multiple upstream accounts and platforms.
+- Model-oriented routing with account -> model -> channel management.
+- OpenAI-compatible `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/embeddings`, Files, Images, Search, and Videos pass-through surfaces.
+- Claude Messages-compatible `/v1/messages` and `/v1/messages/count_tokens` pass-through.
+- Gemini-compatible `/v1beta/models` and `generateContent` / `streamGenerateContent` pass-through.
+- `weighted`, `stable_first`, and `round_robin` route strategies with channel priority, weights, cooldowns, retry attempts, and decision explanations.
+- Admin UI for upstream accounts, downstream keys, model channels, model testing, proxy logs, events, notifications, monitor status, OAuth connections, settings, and import/export.
+- Usage and cost accounting from non-stream JSON usage and stream SSE terminal usage.
+- Proxy debug traces with per-attempt records, probability snapshots, selected-channel details, and failure evidence.
+- SQLite startup migration, Docker Compose service mode, and a Tauri v2 desktop shell with a local Fastify sidecar.
+
+## Stack
+
+- Runtime: Node.js >= 22
+- Backend: TypeScript strict, Fastify, Drizzle ORM, SQLite, Zod
+- Frontend: Vite, Vue 3, Vue Router, Pinia, Naive UI, TailwindCSS, SCSS
+- Desktop: Tauri v2 sidecar mode
+- Packaging: Docker Compose and pnpm scripts
+
+## Quick Start
 
 ```bash
+cd a2api
 pnpm install
-pnpm dev:server
-pnpm dev:web
+cp .env.example .env
+pnpm dev
 ```
 
-`pnpm dev` / `pnpm dev:server` starts the server in development mode and prints the current admin `AUTH_TOKEN` in the terminal after the server is listening.
+Development URLs:
 
-Build:
+- Admin UI: `http://127.0.0.1:5173`
+- API server: `http://127.0.0.1:4000`
+
+`pnpm dev` starts the Fastify server and the Vite admin UI. In development, the server prints the current admin `AUTH_TOKEN` after it starts.
+
+## First Setup
+
+1. Log in to the admin UI with `AUTH_TOKEN`.
+2. Add an upstream account with API endpoint, API key, platform, proxy, status, and model settings.
+3. Refresh or preview upstream models, then save the fixed model list you want exposed.
+4. Open the model page to adjust channel priority, weight, enabled state, strategy, and cooldowns.
+5. Create a downstream key.
+6. Point your client to the a2api base URL and use the downstream key as a bearer token.
+
+Example:
 
 ```bash
-pnpm build
-pnpm start
+curl http://127.0.0.1:4000/v1/models \
+  -H "Authorization: Bearer $DOWNSTREAM_KEY"
+```
+
+## Scripts
+
+```bash
+pnpm dev              # server + web UI
+pnpm dev:server       # Fastify server only
+pnpm dev:web          # Vite admin UI only
+pnpm build            # web + server build
+pnpm start            # run dist/server
+pnpm typecheck        # TypeScript check
+pnpm test             # Vitest
+pnpm format           # Prettier write
+pnpm format:check     # Prettier check
+pnpm db:migrate       # run SQLite migrations
 ```
 
 Desktop:
@@ -103,63 +96,71 @@ pnpm tauri:dev
 pnpm tauri:build
 ```
 
-The desktop app bundles a Node.js sidecar runtime, `dist/server`, `dist/web`, and production `node_modules`, so end users do not need to install Node.js. Tauri starts the sidecar with `HOST=127.0.0.1`, an available local `PORT`, and a system application data directory; normal `pnpm start` and Docker behavior still use the server defaults.
-
-Format:
+Docker:
 
 ```bash
-pnpm format
-pnpm format:check
+AUTH_TOKEN=your-admin-token PROXY_TOKEN=your-proxy-token docker compose up -d --build
 ```
-
-## Path Aliases
-
-Vite and TypeScript share these aliases:
-
-- `@/*` -> `src/*`
-- `@web/*` -> `src/web/*`
-- `@pages/*` -> `src/web/pages/*`
-- `@styles/*` -> `src/web/styles/*`
-- `@server/*` -> `src/server/*`
-
-Frontend cross-directory imports should prefer `@web`, `@pages`, and `@styles`; nearby files can keep relative imports. Server runtime imports still use relative paths unless runtime alias support is added.
 
 ## Environment
 
-```env
-AUTH_TOKEN=change-me-admin-token
-PROXY_TOKEN=change-me-proxy-sk-token
-HOST=0.0.0.0
-PORT=4000
-DATA_DIR=./data
-REQUEST_BODY_LIMIT=20971520
-SYSTEM_PROXY_URL=
-ADMIN_IP_ALLOWLIST=
-PROXY_MAX_CHANNEL_ATTEMPTS=3
-PROXY_CHANNEL_RETRY_ATTEMPTS=1
-DEFAULT_ROUTING_STRATEGY=weighted
-PROXY_FIRST_BYTE_TIMEOUT_SEC=0
-TOKEN_ROUTER_CACHE_TTL_MS=1500
-BALANCE_REFRESH_CRON="0 * * * *"
-LOG_CLEANUP_CRON="0 6 * * *"
-LOG_CLEANUP_RETENTION_DAYS=30
-WEBHOOK_ENABLED=false
-WEBHOOK_URL=
-NOTIFY_COOLDOWN_SEC=300
+Copy `.env.example` to `.env` for local development.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AUTH_TOKEN` | `change-me-admin-token` | Admin UI and admin API token. Must be changed in production. |
+| `PROXY_TOKEN` | `change-me-proxy-sk-token` | Default proxy bearer token. Must be changed in production. |
+| `HOST` | `0.0.0.0` | Fastify listen host. |
+| `PORT` | `4000` | Fastify listen port. |
+| `DATA_DIR` | `./data` | Runtime data directory. |
+| `DB_URL` | `${DATA_DIR}/a2api.sqlite` | Optional SQLite database path override. |
+| `REQUEST_BODY_LIMIT` | `20971520` | Fastify request body limit in bytes. |
+| `SYSTEM_PROXY_URL` | empty | Optional outbound system proxy. |
+| `ADMIN_IP_ALLOWLIST` | empty | Optional comma-separated admin IP allowlist. |
+| `PROXY_MAX_CHANNEL_ATTEMPTS` | `3` | Maximum channels tried per proxy request. |
+| `PROXY_CHANNEL_RETRY_ATTEMPTS` | `1` | Retry attempts per selected channel. |
+| `DEFAULT_ROUTING_STRATEGY` | `weighted` | New automatic model route strategy: `weighted`, `stable_first`, or `round_robin`. |
+| `PROXY_FIRST_BYTE_TIMEOUT_SEC` | `0` | Optional upstream first-byte timeout. |
+| `TOKEN_ROUTER_CACHE_TTL_MS` | `1500` | Token router cache TTL. |
+| `BALANCE_REFRESH_CRON` | `0 * * * *` | Balance refresh schedule. |
+| `LOG_CLEANUP_CRON` | `0 6 * * *` | Log cleanup schedule. |
+| `LOG_CLEANUP_RETENTION_DAYS` | `30` | Log retention days. |
+| `WEBHOOK_ENABLED` | `false` | Enable webhook notifications. |
+| `WEBHOOK_URL` | empty | Webhook notification URL. |
+| `NOTIFY_COOLDOWN_SEC` | `300` | Notification cooldown. |
+
+## Client Base URLs
+
+After build, Fastify serves the admin UI and proxy endpoints from one origin:
+
+- OpenAI-compatible clients: `http://127.0.0.1:4000/v1`
+- Claude Messages-compatible clients: `http://127.0.0.1:4000/v1`
+- Gemini-compatible clients: `http://127.0.0.1:4000/v1beta`
+- Root aliases: `/chat/completions`, `/responses`, `/responses/compact`
+
+Use a downstream key created in the admin UI for normal clients. `PROXY_TOKEN` is the initial server-level proxy token.
+
+## Admin Areas
+
+- Dashboard: requests, success rate, tokens, cost, active upstreams, and abnormal upstream accounts.
+- Upstream accounts: endpoint, key, platform, authentication mode, proxy, cost, status, model list, balance refresh, and batch operations.
+- Models: exposed models, route strategy, channel priority, weights, cooldowns, score reset, and decision details.
+- Model tester: non-stream chat tests through the same routing core, with optional downstream policy and forced channel.
+- Logs: request filters, final result, billing, retry details, failed attempts, selected-channel score, and probability explanation.
+- Monitor: native upstream account checks, heartbeat bars, uptime windows, manual checks, and settings.
+- Settings: runtime proxy, retry, timeout, allowlist, route cache, temporary-disable rules, log cleanup, backup, and maintenance actions.
+
+## Repository Layout
+
+```text
+src/server/       Fastify server, routes, services, adapters, SQLite schema
+src/web/          Vue admin UI, pages, router, stores, styles
+src-tauri/        Tauri desktop shell and sidecar configuration
+docker/           Docker image definition
+scripts/          Packaging helpers
+docs/             README assets
 ```
 
-SQLite defaults to `${DATA_DIR}/a2api.sqlite`.
+## Current Scope
 
-`AUTH_TOKEN` is the admin UI login token. It can be set in `a2api/.env` or the process environment. If unset, development mode falls back to `change-me-admin-token`; production mode rejects the built-in default.
-`DEFAULT_ROUTING_STRATEGY` controls the default strategy for new automatic models. Supported values are `weighted`, `stable_first`, and `round_robin`.
-
-## First Flow
-
-1. Start server and web UI.
-2. Log in with `AUTH_TOKEN`.
-3. Open the upstream account page and add an upstream account with API endpoint and API Key.
-4. Refresh upstream account models.
-5. Rebuild models.
-6. If several upstream accounts share the same model, open the model page and use the channel drawer to adjust upstream account priority, weight, or per-model strategy (`weighted`, `stable_first`, or `round_robin`).
-7. Create a downstream key with `modelScope = all`.
-8. Call `/v1/models` or `/v1/chat/completions` using that key.
+The current implementation covers the main self-hosted proxy and admin workflows. Deferred areas include Gemini native `countTokens`, Search web-search simulation, full provider-native OAuth token exchange, persistent OAuth sessions, provider-specific quota semantics, full route group runtime expansion, multi-database runtime, desktop auto-update, signing/notarization, cross-platform release CI, and advanced analytics.
